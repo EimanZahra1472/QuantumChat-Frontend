@@ -1,8 +1,16 @@
-import { Clock, FilePen, Trash2, Upload } from 'lucide-react';
+import { Clock, Eye, Pencil, Trash2, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
 import { defaultScheduleLocalValue } from './StoryPublishControls.jsx';
+
+const TTL_PRESETS = [
+  { label: '1 hour', ms: 60 * 60 * 1000 },
+  { label: '6 hours', ms: 6 * 60 * 60 * 1000 },
+  { label: '24 hours', ms: 24 * 60 * 60 * 1000 },
+  { label: '3 days', ms: 3 * 24 * 60 * 60 * 1000 },
+  { label: '7 days', ms: 7 * 24 * 60 * 60 * 1000 },
+];
 
 function formatWhen(iso) {
   if (!iso) return '';
@@ -18,11 +26,21 @@ function formatWhen(iso) {
   }
 }
 
+function defaultScheduleLocalValueFromIso(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return defaultScheduleLocalValue();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function StoryDraftsPanel({ open, onClose, onError, onChanged, onPreviewDraft }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
-  const [scheduleEditId, setScheduleEditId] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [editTtl, setEditTtl] = useState(TTL_PRESETS[2].ms);
+  const [editAllowReplies, setEditAllowReplies] = useState(true);
+  const [editSchedule, setEditSchedule] = useState(false);
   const [scheduleLocal, setScheduleLocal] = useState(defaultScheduleLocalValue);
 
   async function load() {
@@ -40,6 +58,7 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
 
   useEffect(() => {
     if (!open) return undefined;
+    setEditId(null);
     load();
     function onKey(e) {
       if (e.key === 'Escape') onClose?.();
@@ -50,36 +69,56 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
 
   if (!open) return null;
 
-  async function publishNow(id) {
+  function openEdit(item) {
+    setEditId(item.id);
+    setEditTtl(item.ttlMs || TTL_PRESETS[2].ms);
+    setEditAllowReplies(item.allowReplies !== false);
+    setEditSchedule(item.status === 'scheduled');
+    setScheduleLocal(
+      item.publishAt ? defaultScheduleLocalValueFromIso(item.publishAt) : defaultScheduleLocalValue()
+    );
+  }
+
+  async function saveEdit(id) {
     setBusyId(id);
     try {
-      await client.post(`/stories/${id}/publish`);
+      const payload = {
+        ttlMs: editTtl,
+        allowReplies: editAllowReplies,
+        status: editSchedule ? 'scheduled' : 'draft',
+      };
+      if (editSchedule) {
+        const at = new Date(scheduleLocal);
+        if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now() + 30_000) {
+          onError?.('Pick a schedule time at least 30 seconds from now');
+          setBusyId(null);
+          return;
+        }
+        payload.publishAt = at.toISOString();
+      }
+      await client.patch(`/stories/${id}`, payload);
+      setEditId(null);
       await load();
       onChanged?.();
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to publish');
+      onError?.(err.response?.data?.error || err.message || 'Failed to save changes');
     } finally {
       setBusyId(null);
     }
   }
 
-  async function saveSchedule(id) {
-    const at = new Date(scheduleLocal);
-    if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now() + 30_000) {
-      onError?.('Pick a time at least 30 seconds from now');
-      return;
-    }
+  /** Publish immediately — no extra confirmation. */
+  async function publishNow(id) {
     setBusyId(id);
     try {
-      await client.patch(`/stories/${id}`, {
-        status: 'scheduled',
-        publishAt: at.toISOString(),
-      });
-      setScheduleEditId(null);
-      await load();
+      await client.post(`/stories/${id}/publish`);
+      const next = items.filter((i) => i.id !== id);
+      setItems(next);
+      setEditId(null);
       onChanged?.();
+      if (next.length === 0) onClose?.();
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to update schedule');
+      onError?.(err.response?.data?.error || err.message || 'Failed to publish');
     } finally {
       setBusyId(null);
     }
@@ -102,8 +141,11 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
     setBusyId(id);
     try {
       await client.delete(`/stories/${id}`);
-      await load();
+      const next = items.filter((i) => i.id !== id);
+      setItems(next);
+      if (editId === id) setEditId(null);
       onChanged?.();
+      if (next.length === 0) onClose?.();
     } catch (err) {
       onError?.(err.response?.data?.error || err.message || 'Failed to delete');
     } finally {
@@ -112,9 +154,14 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
   }
 
   return createPortal(
-    <div className="status-create-overlay" onClick={onClose}>
-      <div className="story-drafts-sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="status-create-handle" aria-hidden />
+    <div className="story-drafts-overlay" onClick={onClose}>
+      <div
+        className="story-drafts-sheet"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Drafts and scheduled"
+      >
         <div className="story-drafts-header">
           <h2 className="status-create-title">Drafts &amp; scheduled</h2>
           <button type="button" onClick={onClose} aria-label="Close">
@@ -131,6 +178,7 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
         <ul className="story-drafts-list">
           {items.map((item) => {
             const busy = busyId === item.id;
+            const editing = editId === item.id;
             return (
               <li key={item.id} className="story-drafts-row">
                 <div className="story-drafts-meta">
@@ -145,46 +193,91 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
                   </span>
                 </div>
 
-                {scheduleEditId === item.id && (
-                  <div className="story-drafts-schedule-edit">
-                    <input
-                      type="datetime-local"
-                      className="story-schedule-input"
-                      value={scheduleLocal}
-                      disabled={busy}
-                      onChange={(e) => setScheduleLocal(e.target.value)}
-                    />
-                    <button type="button" className="story-composer-post" disabled={busy} onClick={() => saveSchedule(item.id)}>
-                      Save time
-                    </button>
+                {editing && (
+                  <div className="story-drafts-edit-panel">
+                    <p className="story-composer-ttl-label">Visible for (after publish)</p>
+                    <div className="story-composer-ttl-presets">
+                      {TTL_PRESETS.map((p) => (
+                        <button
+                          key={p.ms}
+                          type="button"
+                          className={`story-ttl-preset ${editTtl === p.ms ? 'active' : ''}`}
+                          disabled={busy}
+                          onClick={() => setEditTtl(p.ms)}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="story-composer-check" style={{ margin: '8px 0' }}>
+                      <input
+                        type="checkbox"
+                        checked={editAllowReplies}
+                        disabled={busy}
+                        onChange={(e) => setEditAllowReplies(e.target.checked)}
+                      />
+                      <span>Allow replies</span>
+                    </label>
+                    <label className="story-composer-check" style={{ margin: '0 0 8px' }}>
+                      <input
+                        type="checkbox"
+                        checked={editSchedule}
+                        disabled={busy}
+                        onChange={(e) => setEditSchedule(e.target.checked)}
+                      />
+                      <span>Schedule for later</span>
+                    </label>
+                    {editSchedule && (
+                      <input
+                        type="datetime-local"
+                        className="story-schedule-input"
+                        value={scheduleLocal}
+                        disabled={busy}
+                        onChange={(e) => setScheduleLocal(e.target.value)}
+                      />
+                    )}
+                    <div className="story-drafts-edit-actions">
+                      <button type="button" className="story-composer-secondary" disabled={busy} onClick={() => setEditId(null)}>
+                        Cancel
+                      </button>
+                      <button type="button" className="story-composer-post" disabled={busy} onClick={() => saveEdit(item.id)}>
+                        {busy ? 'Saving…' : 'Save changes'}
+                      </button>
+                    </div>
                   </div>
                 )}
 
                 <div className="story-drafts-actions">
+                  <button type="button" title="Edit" disabled={busy} onClick={() => openEdit(item)}>
+                    <Pencil size={16} aria-hidden />
+                    Edit
+                  </button>
                   <button
                     type="button"
                     title="Preview"
                     disabled={busy}
                     onClick={() => onPreviewDraft?.(item)}
                   >
-                    <FilePen size={16} aria-hidden />
+                    <Eye size={16} aria-hidden />
                     Preview
                   </button>
-                  <button type="button" title="Publish now" disabled={busy} onClick={() => publishNow(item.id)}>
+                  <button
+                    type="button"
+                    className="story-drafts-publish"
+                    title="Publish now"
+                    disabled={busy}
+                    onClick={() => publishNow(item.id)}
+                  >
                     <Upload size={16} aria-hidden />
-                    Publish
+                    {busy && busyId === item.id ? 'Publishing…' : 'Publish'}
                   </button>
                   <button
                     type="button"
                     title="Schedule"
                     disabled={busy}
                     onClick={() => {
-                      setScheduleEditId(item.id);
-                      setScheduleLocal(
-                        item.publishAt
-                          ? defaultScheduleLocalValueFromIso(item.publishAt)
-                          : defaultScheduleLocalValue()
-                      );
+                      openEdit(item);
+                      setEditSchedule(true);
                     }}
                   >
                     <Clock size={16} aria-hidden />
@@ -208,11 +301,4 @@ export default function StoryDraftsPanel({ open, onClose, onError, onChanged, on
     </div>,
     document.body
   );
-}
-
-function defaultScheduleLocalValueFromIso(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return defaultScheduleLocalValue();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

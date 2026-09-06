@@ -9188,14 +9188,28 @@ input:focus-visible,
   width: 90%;
 }
 
+.story-drafts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: storyOverlayFadeIn 160ms ease both;
+}
+
 .story-drafts-sheet {
-  width: min(440px, 100%);
-  max-height: 88vh;
+  width: min(440px, 96vw);
+  max-height: 86vh;
   overflow: auto;
   background: #1c1e24;
-  border-radius: 18px 18px 0 0;
-  padding: 10px 16px 20px;
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.4);
+  border-radius: 16px;
+  padding: 16px 16px 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: storyComposerPopIn 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .story-drafts-header {
@@ -9284,6 +9298,27 @@ input:focus-visible,
 .story-drafts-actions button.danger {
   color: #ff8a80;
   border-color: rgba(255, 138, 128, 0.35);
+}
+
+.story-drafts-actions button.story-drafts-publish {
+  background: var(--accent, #00a884);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.story-drafts-edit-panel {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.story-drafts-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .story-drafts-schedule-edit {
