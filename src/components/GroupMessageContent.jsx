@@ -276,6 +276,8 @@ export default function GroupMessageContent({
   isMine,
   onImagePreview,
   onImageReady,
+  onVideoPreview,
+  onVideoReady,
   onBurnViewOnce,
 }) {
   if (!payload || payload.type === 'text') {
@@ -306,7 +308,7 @@ export default function GroupMessageContent({
         className={`message-text ${detectTextDirection(body) === 'rtl' ? 'is-rtl' : 'is-ltr'}`}
         dir={detectTextDirection(body)}
       >
-        <MentionText text={body} />
+        <LinkifiedText text={body} />
       </div>
     );
   }
@@ -318,7 +320,7 @@ export default function GroupMessageContent({
         dir={detectTextDirection(payload.body)}
       >
         <span className="group-kind-badge">Announcement</span>
-        <MentionText text={payload.body || ''} />
+        <LinkifiedText text={payload.body || ''} />
       </div>
     );
   }
@@ -450,6 +452,8 @@ export default function GroupMessageContent({
         resolveSecretKey={resolveSecretKey}
         onImagePreview={onImagePreview}
         onImageReady={onImageReady}
+        onVideoPreview={onVideoPreview}
+        onVideoReady={onVideoReady}
         viewOnce={Boolean(message.viewOnce)}
         viewOnceOpened={Boolean(message.viewOnceOpenedAt)}
         viewOnceMediaKind={message.viewOnceMediaKind}
@@ -458,5 +462,5 @@ export default function GroupMessageContent({
     );
   }
 
-  return <MentionText text={message?.text || ''} />;
+  return <LinkifiedText text={message?.text || ''} />;
 }

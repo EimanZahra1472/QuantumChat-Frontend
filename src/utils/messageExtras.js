@@ -62,6 +62,13 @@ export function clearAllStarred(userId) {
   return [];
 }
 
+/** Replace the full starred list (used to undo a clear). */
+export function restoreStarredEntries(userId, entries) {
+  const next = Array.isArray(entries) ? entries : [];
+  writeStarredEntries(userId, next);
+  return next.map((e) => e.id);
+}
+
 export function toggleStarredMessage(userId, message, conversation) {
   const id = String(message?.id || message?._id || message);
   const entries = readStarredEntries(userId);

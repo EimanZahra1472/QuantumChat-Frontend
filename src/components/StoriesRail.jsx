@@ -1,4 +1,4 @@
-import { Eye, Mic, Paperclip, Send, Smile, Square, X } from 'lucide-react';
+import { Camera, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
@@ -15,6 +15,9 @@ import {
 import { COMPOSER_EMOJIS, searchEmojis } from '../utils/emojis.js';
 import { playNotificationSound, shouldNotify, showNotificationPopup } from '../utils/notificationDispatch.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
+import StoryDraftsPanel from './StoryDraftsPanel.jsx';
+import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
+import TextStoryComposer from './TextStoryComposer.jsx';
 import UserAvatar from './UserAvatar.jsx';
 const MAX_STORY_SECONDS = 60;
 const TTL_PRESETS = [
@@ -171,6 +174,13 @@ function viewerCanSeeStory(story, currentUserId) {
   return (story.envelopes || []).some((e) => envelopeUserId(e) === uid);
 }
 
+/** Session cache of decrypted story object URLs — reopening a status is instant. */
+const storyMediaCache = new Map();
+
+function cacheKeyForStory(story) {
+  return `${story.id}:${story.sealed ? '1' : '0'}:${story.contentIv || ''}`;
+}
+
 function formatElapsed(dateStr) {
   if (!dateStr) return '';
   const diffMs = Date.now() - new Date(dateStr).getTime();
@@ -205,7 +215,13 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [unavailable, setUnavailable] = useState(false);
-  const inputRef = useRef(null);
+  const [createSheetOpen, setCreateSheetOpen] = useState(false);
+  const [textComposerOpen, setTextComposerOpen] = useState(false);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [draftCount, setDraftCount] = useState(0);
+  const [fabHost, setFabHost] = useState(null);
+  const mediaInputRef = useRef(null);
+  const audioInputRef = useRef(null);
   const grouped = useMemo(() => {
     const map = new Map();
     for (const story of stories) {
@@ -243,8 +259,18 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     }
   }
 
+  async function loadDraftsCount() {
+    try {
+      const { data } = await client.get('/stories/mine/drafts');
+      setDraftCount((data.data || []).length);
+    } catch {
+      setDraftCount(0);
+    }
+  }
+
   useEffect(() => {
     loadStories().catch(() => { });
+    loadDraftsCount().catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -287,17 +313,52 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   };
 }, [currentUser?.id, currentUser?.friends, notifSettings]);
 
+  useEffect(() => {
+    setFabHost(document.querySelector('.qc-conversation-pane'));
+  }, []);
+
+  const ownGroup = useMemo(
+    () => grouped.find((g) => String(g.user?.id) === String(currentUser?.id)) || null,
+    [grouped, currentUser?.id]
+  );
+
+  useEffect(() => {
+    if (!createSheetOpen) return undefined;
+    function onKey(e) {
+      if (e.key === 'Escape') setCreateSheetOpen(false);
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [createSheetOpen]);
+
   function handleFileSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+    setCreateSheetOpen(false);
+    setTextComposerOpen(false);
     setPendingFile(file);
     setPendingPreviewUrl(URL.createObjectURL(file));
   }
 
+  function openCreateSheet() {
+    if (uploading) return;
+    setCreateSheetOpen(true);
+  }
 
-  async function uploadStory(file, ttlMs, allowReplies = true) {
+  function openOwnStoriesOrCreate() {
+    if (uploading) return;
+    if (ownGroup?.items?.length) {
+      setUnavailable(false);
+      setViewer({ group: ownGroup, index: 0 });
+      return;
+    }
+    openCreateSheet();
+  }
+
+
+  async function uploadStory(file, ttlMs, allowReplies = true, options = {}) {
     try {
       setUploading(true);
 
@@ -324,14 +385,13 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         }
       }
 
+      const status = options.status || 'published';
       const form = new FormData();
       const canSeal = typeof crypto !== 'undefined' && crypto.subtle;
 
       if (canSeal) {
         const sealed = await aesGcmEncryptBlob(file);
 
-        // Seal the author envelope to keys this device actually holds (same
-        // pattern as chat forSender), not a possibly stale session publicKeys list.
         const ownerKeySet = getCurrentKeySet(ownerUser.id, KEY_SET_SIZE);
         const ownerPublicKeys = ownerKeySet.map((k) => k.publicKey).filter(Boolean);
         if (ownerPublicKeys.length !== KEY_SET_SIZE) {
@@ -356,7 +416,6 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         for (const u of users) {
           if (!u?.id || !u.publicKeys?.length) continue;
           if (String(u.id) === String(ownerUser.id)) continue;
-           // --- Story privacy filter
           if (storyPrivacy === 'nobody') continue;
           if (storyPrivacy === 'friends' && !friendSet.has(String(u.id))) continue;
           if (storyPrivacy === 'selected' && !selectedSet.has(String(u.id))) continue;
@@ -400,9 +459,14 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       form.append('durationMs', String(durationMs));
       form.append('ttlMs', String(ttlMs));
       form.append('allowReplies', String(allowReplies));
+      form.append('status', status);
+      if (status === 'scheduled' && options.publishAt) {
+        form.append('publishAt', options.publishAt);
+      }
 
       await client.post('/stories', form);
-      await loadStories();
+      if (status === 'published') await loadStories();
+      await loadDraftsCount();
       return true;
     } catch (err) {
       onError?.(err.response?.data?.error || err.message || 'Failed to upload story');
@@ -416,13 +480,40 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
     setPendingFile(null);
     setPendingPreviewUrl(null);
+    setTextComposerOpen(false);
   }
 
-  async function confirmPostStory(ttlMs, allowReplies) {
+  async function confirmPostStory(ttlMs, allowReplies, options = {}) {
     const file = pendingFile;
     if (!file || uploading) return;
-    const ok = await uploadStory(file, ttlMs, allowReplies);
+    const ok = await uploadStory(file, ttlMs, allowReplies, options);
     if (ok) closeComposer();
+  }
+
+  async function confirmPostTextStory(file, ttlMs, allowReplies, options = {}) {
+    if (!file || uploading) return;
+    const ok = await uploadStory(file, ttlMs, allowReplies, options);
+    if (ok) closeComposer();
+  }
+
+  async function openDraftPreview(draft) {
+    setDraftsOpen(false);
+    try {
+      setUnavailable(false);
+      setViewer({
+        group: {
+          user: draft.user || {
+            id: currentUser?.id,
+            username: currentUser?.username,
+            hasAvatar: currentUser?.hasAvatar,
+          },
+          items: [draft],
+        },
+        index: 0,
+      });
+    } catch {
+      onError?.('Could not open draft preview');
+    }
   }
 
   useImperativeHandle(ref, () => ({
@@ -443,26 +534,45 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       <p className="stories-privacy-note">
         Sealed stories use X5 envelopes so allowed contacts can decrypt; the server only stores ciphertext.
       </p>
-      <button
-        type="button"
-        className={`story-ring add${uploading ? ' uploading' : ''}`}
-        onClick={() => inputRef.current?.click()}
-        disabled={uploading}
-        aria-label="Add story"
-      >
-        <UserAvatar
-          userId={currentUser?.id}
-          name={currentUser?.username}
-          hasAvatar={currentUser?.hasAvatar}
-          size="story"
-        />
-        <span className="story-add-badge">{uploading ? '…' : '+'}</span>
-        <span className="story-ring-label">{uploading ? 'Uploading…' : 'Your story'}</span>
-      </button>
+
+      <div className="story-add-wrap">
+        <button
+          type="button"
+          className={`story-ring add${uploading ? ' uploading' : ''}${ownGroup?.items?.length ? ' has-own' : ''}`}
+          onClick={openOwnStoriesOrCreate}
+          disabled={uploading}
+          aria-label={ownGroup?.items?.length ? 'View your status' : 'Add status'}
+        >
+          <UserAvatar
+            userId={currentUser?.id}
+            name={currentUser?.username}
+            hasAvatar={currentUser?.hasAvatar}
+            size="story"
+          />
+          <span className="story-ring-label">{uploading ? 'Uploading…' : 'My status'}</span>
+        </button>
+        <button
+          type="button"
+          className="story-add-badge"
+          disabled={uploading}
+          aria-label="Add status"
+          onClick={openCreateSheet}
+        >
+          {uploading ? '…' : '+'}
+        </button>
+      </div>
+
       <input
-        ref={inputRef}
+        ref={mediaInputRef}
         type="file"
-        accept="image/*,video/*,audio/*"
+        accept="image/*,video/*"
+        hidden
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={audioInputRef}
+        type="file"
+        accept="audio/*"
         hidden
         onChange={handleFileSelected}
       />
@@ -477,7 +587,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
 
       {!storiesLoading &&
         grouped
-          .filter((g) => String(g.user?.id) !== String(currentUser?.id) || g.items.length > 0)
+          .filter((g) => String(g.user?.id) !== String(currentUser?.id))
           .map((g) => {
             const hasSealed = g.items.some((s) => s.sealed);
             return (
@@ -534,8 +644,157 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           onCancel={closeComposer}
           onConfirm={confirmPostStory}
           uploading={uploading}
+          onError={onError}
         />
       )}
+      {textComposerOpen && !pendingFile && (
+        <TextStoryComposer
+          onCancel={() => setTextComposerOpen(false)}
+          onConfirm={confirmPostTextStory}
+          uploading={uploading}
+          onError={onError}
+        />
+      )}
+
+      <StoryDraftsPanel
+        open={draftsOpen}
+        onClose={() => setDraftsOpen(false)}
+        onError={onError}
+        onChanged={() => {
+          loadStories();
+          loadDraftsCount();
+        }}
+        onPreviewDraft={openDraftPreview}
+      />
+
+      {createSheetOpen &&
+        createPortal(
+          <div
+            className="status-create-overlay"
+            onClick={() => setCreateSheetOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="status-create-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Add status"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="status-create-handle" aria-hidden />
+              <h2 className="status-create-title">Add status</h2>
+              <p className="status-create-subtitle">Share a photo, video, voice note, or text</p>
+              <div className="status-create-options">
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    mediaInputRef.current?.click();
+                  }}
+                >
+                  <span className="status-create-icon media">
+                    <ImagePlus size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Photo &amp; video</strong>
+                    <small>Upload from your gallery</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    audioInputRef.current?.click();
+                  }}
+                >
+                  <span className="status-create-icon audio">
+                    <Mic size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Voice note</strong>
+                    <small>Share an audio status</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    setTextComposerOpen(true);
+                  }}
+                >
+                  <span className="status-create-icon text">
+                    <Type size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Text status</strong>
+                    <small>Type with colors and fonts</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    setDraftsOpen(true);
+                  }}
+                >
+                  <span className="status-create-icon drafts">
+                    <FilePen size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Drafts &amp; scheduled</strong>
+                    <small>
+                      {draftCount > 0
+                        ? `${draftCount} waiting — preview, edit, or publish`
+                        : 'Save drafts and schedule posts'}
+                    </small>
+                  </span>
+                </button>
+              </div>
+              <button
+                type="button"
+                className="status-create-cancel"
+                onClick={() => setCreateSheetOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {!uploading &&
+        !pendingFile &&
+        !textComposerOpen &&
+        !createSheetOpen &&
+        !viewer &&
+        fabHost &&
+        createPortal(
+          <div className="status-fabs" aria-label="Create status">
+            <button
+              type="button"
+              className="status-fab text"
+              title="Text status"
+              aria-label="Text status"
+              onClick={() => setTextComposerOpen(true)}
+            >
+              <Pencil size={20} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="status-fab camera"
+              title="Add status"
+              aria-label="Add photo, video, or other status"
+              onClick={openCreateSheet}
+            >
+              <Camera size={24} aria-hidden />
+            </button>
+          </div>,
+          fabHost
+        )}
     </div>
   );
 });
@@ -583,6 +842,8 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   const [index, setIndex] = useState(startIndex || 0);
   const [mediaUrl, setMediaUrl] = useState(null);
   const [blockedReason, setBlockedReason] = useState('');
+  const [loadPhase, setLoadPhase] = useState(''); // '', 'download', 'decrypt'
+  const [downloadPct, setDownloadPct] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const replyInputRef = useRef(null);
@@ -613,10 +874,12 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   useEffect(() => {
     const abortController = new AbortController();
     let objectUrl;
+    let usedCache = false;
 
-    // Reset state for the new story immediately
     setMediaUrl(null);
     setBlockedReason('');
+    setLoadPhase('');
+    setDownloadPct(null);
 
     if (!isOwn) {
       client.post(`/stories/${story.id}/view`).catch(() => {
@@ -625,7 +888,15 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
     }
 
     (async () => {
-       if (story.sealed) {
+      const cacheKey = cacheKeyForStory(story);
+      const cached = storyMediaCache.get(cacheKey);
+      if (cached) {
+        usedCache = true;
+        setMediaUrl(cached);
+        return;
+      }
+
+      if (story.sealed) {
         const unlocked = unlockStoryKey(story, currentUserId);
         const ivB64 = unlocked?.payload?.ivB64 || story.contentIv;
 
@@ -634,13 +905,22 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           return;
         }
 
+        setLoadPhase('download');
         const res = await client.get(`/stories/${story.id}/media`, {
           responseType: 'arraybuffer',
-          signal: abortController.signal, // Kills the request on unmount
+          signal: abortController.signal,
+          timeout: 90_000,
+          onDownloadProgress: (evt) => {
+            if (!evt.total) return;
+            setDownloadPct(Math.min(99, Math.round((evt.loaded / evt.total) * 100)));
+          },
         });
 
-        // Bail out before heavy decryption if the user already skipped
         if (abortController.signal.aborted) return;
+
+        setLoadPhase('decrypt');
+        setDownloadPct(100);
+        await new Promise((r) => requestAnimationFrame(() => r()));
 
         const cipherBytes = new Uint8Array(res.data);
         const plain = await aesGcmDecryptBytes(cipherBytes, unlocked.payload.keyB64, ivB64);
@@ -650,26 +930,34 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
         objectUrl = URL.createObjectURL(
           new Blob([plain], { type: story.mimetype || 'application/octet-stream' })
         );
+        storyMediaCache.set(cacheKey, objectUrl);
         setMediaUrl(objectUrl);
+        setLoadPhase('');
         return;
       }
 
-      // Non-sealed path
+      setLoadPhase('download');
       const res = await client.get(`/stories/${story.id}/media`, {
         responseType: 'blob',
         signal: abortController.signal,
+        timeout: 90_000,
+        onDownloadProgress: (evt) => {
+          if (!evt.total) return;
+          setDownloadPct(Math.min(99, Math.round((evt.loaded / evt.total) * 100)));
+        },
       });
 
       if (abortController.signal.aborted) return;
 
       objectUrl = URL.createObjectURL(res.data);
+      storyMediaCache.set(cacheKey, objectUrl);
       setMediaUrl(objectUrl);
-
+      setLoadPhase('');
     })().catch((err) => {
-      // Axios >=0.22 throws 'CanceledError'. Native fetch throws 'AbortError'.
       if (err.name === 'CanceledError' || err.name === 'AbortError') return;
 
       setMediaUrl(null);
+      setLoadPhase('');
 
       if (story.sealed) {
         const status = err?.response?.status;
@@ -677,21 +965,28 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           setBlockedReason('Sealed story — no envelope for your keys');
         } else if (status === 404) {
           setBlockedReason('Story media is missing on the server');
+        } else if (err.code === 'ECONNABORTED') {
+          setBlockedReason('Status download timed out — try again');
         } else {
           setBlockedReason('Could not decrypt this sealed story');
         }
       } else {
-        // Fixes the silent failure for public stories
-        setBlockedReason('Failed to load story media');
+        setBlockedReason(
+          err.code === 'ECONNABORTED'
+            ? 'Status download timed out — try again'
+            : 'Failed to load story media'
+        );
       }
     });
 
     return () => {
-      abortController.abort(); // Triggers the cancellation across the board
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      abortController.abort();
+      // Keep session-cached URLs alive; only revoke uncached blobs.
+      if (objectUrl && !usedCache) {
+        const key = cacheKeyForStory(story);
+        if (storyMediaCache.get(key) !== objectUrl) URL.revokeObjectURL(objectUrl);
+      }
     };
-
-    // Only depend on primitives to prevent infinite re-render loops
   }, [story.id, story.sealed, story.contentIv, story.mimetype, currentUserId]);
 
   useEffect(() => {
@@ -1202,7 +1497,13 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           {!blockedReason && !mediaUrl && (
             <div className="story-media-loading" aria-live="polite">
               <div className="skeleton skeleton-line story-media-loading-bar" />
-              <p className="empty-hint">Decrypting…</p>
+              <p className="empty-hint">
+                {loadPhase === 'decrypt'
+                  ? 'Decrypting…'
+                  : downloadPct != null
+                    ? `Downloading… ${downloadPct}%`
+                    : 'Loading status…'}
+              </p>
             </div>
           )}
           {mediaUrl && story.mediaType === 'image' && <img src={mediaUrl} alt="" />}
@@ -1485,17 +1786,12 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   );
 }
 
-function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading }) {
-  const [preset, setPreset] = useState(DEFAULT_TTL_MS);
-  const [customMode, setCustomMode] = useState(false);
-  const [customValue, setCustomValue] = useState(24);
-  const [customUnit, setCustomUnit] = useState('hours');
-  const [allowReplies, setAllowReplies] = useState(true);
+function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, onError }) {
+  const opts = useStoryPublishOptions(DEFAULT_TTL_MS);
+  const [showPreview, setShowPreview] = useState(false);
   const imagePreviewRef = useRef(null);
   const videoPreviewRef = useRef(null);
   const audioPreviewRef = useRef(null);
-
-  const unitMultiplier = { minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
 
   useEffect(() => {
     let safePreviewUrl = '';
@@ -1522,13 +1818,14 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading }) {
     };
   }, [previewUrl]);
 
-  function computeTtlMs() {
-    if (customMode) {
-      const raw = Number(customValue) || 0;
-      const ms = raw * (unitMultiplier[customUnit] || unitMultiplier.hours);
-      return Math.min(Math.max(ms, MIN_TTL_MS), MAX_TTL_MS);
+  async function submit(status) {
+    if (uploading) return;
+    try {
+      const options = opts.buildOptions(status);
+      await onConfirm?.(opts.computeTtlMs(), opts.allowReplies, options);
+    } catch (err) {
+      onError?.(err?.message || 'Could not save story');
     }
-    return preset;
   }
 
   return (
@@ -1547,86 +1844,25 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading }) {
           {file.type.startsWith('audio/') && <audio ref={audioPreviewRef} controls />}
         </div>
 
-        <div className="story-composer-ttl">
-          <p className="story-composer-ttl-label">Visible for</p>
-          <div className="story-composer-ttl-presets" role="group" aria-label="Story duration">
-            {TTL_PRESETS.map((p) => (
-              <button
-                key={p.ms}
-                type="button"
-                className={`story-ttl-preset ${!customMode && preset === p.ms ? 'active' : ''}`}
-                disabled={uploading}
-                onClick={() => {
-                  setCustomMode(false);
-                  setPreset(p.ms);
-                }}
-              >
-                {p.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={`story-ttl-preset ${customMode ? 'active' : ''}`}
-              disabled={uploading}
-              onClick={() => setCustomMode(true)}
-            >
-              Custom…
-            </button>
-          </div>
+        <StoryPublishControls
+          opts={opts}
+          busy={uploading}
+          canSubmit={!uploading}
+          onPreview={() => setShowPreview(true)}
+          onDraft={() => submit('draft')}
+          onSchedule={() => submit('scheduled')}
+          onPost={() => submit('published')}
+        />
 
-          {customMode && (
-            <div className="story-composer-custom-row">
-              <input
-                type="number"
-                min="1"
-                value={customValue}
-                disabled={uploading}
-                onChange={(e) => setCustomValue(e.target.value)}
-                aria-label="Custom duration value"
-              />
-              <select
-                value={customUnit}
-                disabled={uploading}
-                onChange={(e) => setCustomUnit(e.target.value)}
-                aria-label="Custom duration unit"
-              >
-                <option value="minutes">Minutes</option>
-                <option value="hours">Hours</option>
-                <option value="days">Days</option>
-              </select>
-            </div>
-          )}
-          <p className="story-composer-ttl-hint">
-            Min 15 minutes · max 7 days. Media is sealed before upload.
-          </p>
-        </div>
-
-        <label className="story-composer-ttl" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={allowReplies}
-            disabled={uploading}
-            onChange={(e) => setAllowReplies(e.target.checked)}
-          />
-          <span className="story-composer-ttl-label" style={{ margin: 0 }}>
-            Allow replies to this story
-          </span>
-        </label>
-
-        <div className="story-composer-actions">
+        <div className="story-composer-actions" style={{ paddingTop: 0 }}>
           <button type="button" className="story-composer-cancel" onClick={onCancel} disabled={uploading}>
             Cancel
           </button>
-          <button
-            type="button"
-            className="story-composer-post"
-            disabled={uploading}
-            onClick={() => onConfirm(computeTtlMs(), allowReplies)}
-          >
-            {uploading ? 'Encrypting & posting…' : 'Post story'}
-          </button>
         </div>
       </div>
+      {showPreview && (
+        <StoryLocalPreview file={file} previewUrl={previewUrl} onClose={() => setShowPreview(false)} />
+      )}
     </div>
   );
 }

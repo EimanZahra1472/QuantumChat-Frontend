@@ -117,6 +117,8 @@ export default function AttachmentBubble({
   resolveAttachmentKey,
   onImagePreview,
   onImageReady,
+  onVideoPreview,
+  onVideoReady,
   viewOnce = false,
   viewOnceOpened = false,
   viewOnceMediaKind = null,
@@ -242,6 +244,9 @@ export default function AttachmentBubble({
           setObjectUrl(url);
           if (kind === 'image' && onImageReady) {
             onImageReady(attachmentId, url, attachment.filename);
+          }
+          if (kind === 'video' && onVideoReady) {
+            onVideoReady(attachmentId, url, attachment.filename);
           }
         }
         setStatus('idle');
