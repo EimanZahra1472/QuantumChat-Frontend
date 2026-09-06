@@ -9073,6 +9073,226 @@ input:focus-visible,
   background: #34b7f1;
 }
 
+.status-create-icon.drafts {
+  background: #546e7a;
+}
+
+.story-composer-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #d0d2db;
+  font-size: 13px;
+  margin: 0 16px 10px;
+}
+
+.story-schedule-block {
+  padding: 0 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.story-schedule-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f0f1f5;
+  font-size: 13px;
+}
+
+.story-composer-actions-multi {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.story-composer-secondary {
+  flex: 1;
+  min-width: 100px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e9ef;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.story-composer-secondary:disabled,
+.story-composer-post:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.story-local-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.story-local-preview {
+  width: min(480px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  background: #101218;
+  border-radius: 16px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.story-local-preview-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #fff;
+  font-weight: 600;
+}
+
+.story-local-preview-top button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.story-local-preview-media {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #05060a;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.story-local-preview-media img,
+.story-local-preview-media video {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.story-local-preview-media audio {
+  width: 90%;
+}
+
+.story-drafts-sheet {
+  width: min(440px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+  background: #1c1e24;
+  border-radius: 18px 18px 0 0;
+  padding: 10px 16px 20px;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.story-drafts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.story-drafts-header button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.story-drafts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.story-drafts-row {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.story-drafts-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: #e8e9ef;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.story-drafts-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.story-drafts-badge.draft {
+  background: rgba(84, 110, 122, 0.35);
+  color: #cfd8dc;
+}
+
+.story-drafts-badge.scheduled {
+  background: rgba(0, 168, 132, 0.25);
+  color: #7ddec8;
+}
+
+.story-drafts-when {
+  opacity: 0.6;
+  width: 100%;
+}
+
+.story-drafts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.story-drafts-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8e9ef;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.story-drafts-actions button.danger {
+  color: #ff8a80;
+  border-color: rgba(255, 138, 128, 0.35);
+}
+
+.story-drafts-schedule-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .status-create-copy {
   display: flex;
   flex-direction: column;
