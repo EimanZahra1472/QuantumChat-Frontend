@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import {
+  StoryLocalPreview,
+  StoryPublishControls,
+  useStoryPublishOptions,
+} from './StoryPublishControls.jsx';
 
 const MAX_CHARS = 700;
 
@@ -46,17 +51,6 @@ const ALIGNS = [
   { id: 'center', label: 'Center' },
   { id: 'right', label: 'Right' },
 ];
-
-const TTL_PRESETS = [
-  { label: '1 hour', ms: 60 * 60 * 1000 },
-  { label: '6 hours', ms: 6 * 60 * 60 * 1000 },
-  { label: '24 hours', ms: 24 * 60 * 60 * 1000 },
-  { label: '3 days', ms: 3 * 24 * 60 * 60 * 1000 },
-  { label: '7 days', ms: 7 * 24 * 60 * 60 * 1000 },
-];
-const DEFAULT_TTL_MS = TTL_PRESETS[2].ms;
-const MIN_TTL_MS = 15 * 60 * 1000;
-const MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function cssBackground(fill) {
   if (typeof fill === 'string') return fill;
@@ -177,12 +171,10 @@ export default function TextStoryComposer({ onCancel, onConfirm, uploading, onEr
   const [backgroundId, setBackgroundId] = useState(BACKGROUNDS[0].id);
   const [fontId, setFontId] = useState(FONTS[0].id);
   const [align, setAlign] = useState('center');
-  const [preset, setPreset] = useState(DEFAULT_TTL_MS);
-  const [customMode, setCustomMode] = useState(false);
-  const [customValue, setCustomValue] = useState(24);
-  const [customUnit, setCustomUnit] = useState('hours');
-  const [allowReplies, setAllowReplies] = useState(true);
   const [rendering, setRendering] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const opts = useStoryPublishOptions();
 
   const bg = useMemo(
     () => BACKGROUNDS.find((b) => b.id === backgroundId) || BACKGROUNDS[0],
@@ -200,28 +192,36 @@ export default function TextStoryComposer({ onCancel, onConfirm, uploading, onEr
     return () => window.removeEventListener('keydown', onKey);
   }, [busy, onCancel]);
 
-  function computeTtlMs() {
-    if (customMode) {
-      const raw = Number(customValue) || 0;
-      const mult =
-        customUnit === 'minutes'
-          ? 60 * 1000
-          : customUnit === 'days'
-            ? 24 * 60 * 60 * 1000
-            : 60 * 60 * 1000;
-      return Math.min(Math.max(raw * mult, MIN_TTL_MS), MAX_TTL_MS);
-    }
-    return preset;
-  }
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
-  async function handlePost() {
+  async function submit(status) {
     if (!canPost) return;
     setRendering(true);
     try {
+      const options = opts.buildOptions(status);
       const file = await renderTextStoryToFile(text, { backgroundId, fontId, align });
-      await onConfirm?.(file, computeTtlMs(), allowReplies);
+      await onConfirm?.(file, opts.computeTtlMs(), opts.allowReplies, options);
     } catch (err) {
       onError?.(err?.message || 'Could not create text status');
+    } finally {
+      setRendering(false);
+    }
+  }
+
+  async function handlePreview() {
+    if (!text.trim()) return;
+    setRendering(true);
+    try {
+      const file = await renderTextStoryToFile(text, { backgroundId, fontId, align });
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+    } catch (err) {
+      onError?.(err?.message || 'Could not preview text status');
     } finally {
       setRendering(false);
     }
@@ -306,78 +306,39 @@ export default function TextStoryComposer({ onCancel, onConfirm, uploading, onEr
             ))}
           </div>
 
-          <p className="story-composer-ttl-label">Visible for</p>
-          <div className="story-composer-ttl-presets" role="group" aria-label="Story duration">
-            {TTL_PRESETS.map((p) => (
-              <button
-                key={p.ms}
-                type="button"
-                className={`story-ttl-preset ${!customMode && preset === p.ms ? 'active' : ''}`}
-                disabled={busy}
-                onClick={() => {
-                  setCustomMode(false);
-                  setPreset(p.ms);
-                }}
-              >
-                {p.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={`story-ttl-preset ${customMode ? 'active' : ''}`}
-              disabled={busy}
-              onClick={() => setCustomMode(true)}
-            >
-              Custom…
-            </button>
-          </div>
-          {customMode && (
-            <div className="story-composer-custom-row">
-              <input
-                type="number"
-                min="1"
-                value={customValue}
-                disabled={busy}
-                onChange={(e) => setCustomValue(e.target.value)}
-                aria-label="Custom duration value"
-              />
-              <select
-                value={customUnit}
-                disabled={busy}
-                onChange={(e) => setCustomUnit(e.target.value)}
-                aria-label="Custom duration unit"
-              >
-                <option value="minutes">Minutes</option>
-                <option value="hours">Hours</option>
-                <option value="days">Days</option>
-              </select>
-            </div>
-          )}
-
-          <label className="text-story-replies">
-            <input
-              type="checkbox"
-              checked={allowReplies}
-              disabled={busy}
-              onChange={(e) => setAllowReplies(e.target.checked)}
-            />
-            <span>Allow replies to this story</span>
-          </label>
-
           <p className="text-story-charcount">
             {text.length}/{MAX_CHARS}
           </p>
         </div>
 
-        <div className="story-composer-actions">
+        <StoryPublishControls
+          opts={opts}
+          busy={busy}
+          canSubmit={canPost}
+          onPreview={handlePreview}
+          onDraft={() => submit('draft')}
+          onSchedule={() => submit('scheduled')}
+          onPost={() => submit('published')}
+          postLabel="Post status"
+        />
+
+        <div className="story-composer-actions" style={{ paddingTop: 0 }}>
           <button type="button" className="story-composer-cancel" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="story-composer-post" disabled={!canPost} onClick={handlePost}>
-            {busy ? 'Encrypting & posting…' : 'Post status'}
-          </button>
         </div>
       </div>
+      {previewFile && previewUrl && (
+        <StoryLocalPreview
+          file={previewFile}
+          previewUrl={previewUrl}
+          onClose={() => {
+            URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(null);
+            setPreviewFile(null);
+          }}
+        />
+      )}
     </div>
   );
 }
