@@ -6,6 +6,7 @@ import { isEmojiOnlyText, splitEmojis } from '../utils/emojis.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import VoicePlayer from './VoicePlayer.jsx';
+import LinkifiedText from './LinkifiedText.jsx';
 
 function MentionText({ text }) {
   const parts = [];
