@@ -4,7 +4,7 @@ import { secretboxOpen } from '../crypto/keys.js';
 import { isEmojiOnlyText, splitEmojis } from '../utils/emojis.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
-
+import LinkifiedText from './LinkifiedText.jsx';
 function MentionText({ text }) {
   const parts = [];
   const re = /(@[a-zA-Z0-9_.-]{2,32})/g;
@@ -305,7 +305,7 @@ export default function GroupMessageContent({
         className={`message-text ${detectTextDirection(body) === 'rtl' ? 'is-rtl' : 'is-ltr'}`}
         dir={detectTextDirection(body)}
       >
-        <MentionText text={body} />
+        <LinkifiedText text={body} />
       </div>
     );
   }
@@ -317,7 +317,7 @@ export default function GroupMessageContent({
         dir={detectTextDirection(payload.body)}
       >
         <span className="group-kind-badge">Announcement</span>
-        <MentionText text={payload.body || ''} />
+        <LinkifiedText text={payload.body || ''} />
       </div>
     );
   }
@@ -416,5 +416,5 @@ export default function GroupMessageContent({
     );
   }
 
-  return <MentionText text={message?.text || ''} />;
+  return <LinkifiedText text={message?.text || ''} />;
 }

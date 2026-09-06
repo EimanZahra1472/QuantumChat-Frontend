@@ -25,7 +25,7 @@ import { parseGroupPayload } from '../utils/groupPayload.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import GroupMessageContent from './GroupMessageContent.jsx';
-
+import LinkifiedText from './LinkifiedText.jsx';
 const MENU_GAP = 8;
 const VIEW_PAD = 12;
 
@@ -715,11 +715,11 @@ function MessageBubble({
                 </span>
               ) : (
                 <span
-                  className={`message-text ${detectTextDirection(message.text) === 'rtl' ? 'is-rtl' : 'is-ltr'}`}
-                  dir={detectTextDirection(message.text)}
-                >
-                  {message.text}
-                </span>
+  className={`message-text ${detectTextDirection(message.text) === 'rtl' ? 'is-rtl' : 'is-ltr'}`}
+  dir={detectTextDirection(message.text)}
+>
+  <LinkifiedText text={message.text} />
+</span>
               )
             ) : isDecryptionFail ? (
               <em dir="auto">[Unable to decrypt message]</em>

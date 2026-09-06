@@ -23,7 +23,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getDisplayName } from "../utils/getDisplayName.js";
 import { streamQuantumAI } from "../api/aiClient.js";
-import { fetchChatTheme, fetchThemeCatalog, fetchWallpaperImageUrl } from '../api/chatThemes.js';
+import { fetchChatTheme, fetchThemeCatalog, fetchWallpaperImageUrl, fetchGroupChatTheme, fetchGroupWallpaperImageUrl } from '../api/chatThemes.js';
 import client, { muteChat, unmuteChat } from "../api/client.js";
 import { postPresenceHeartbeat } from "../api/presence.js";
 import { connectSocket, getSocket } from "../api/socket.js";
@@ -131,6 +131,7 @@ import {
   getPinnedIds,
   getStarredEntries,
   getStarredIds,
+  restoreStarredEntries,
   togglePinnedMessage,
   toggleStarredMessage,
 } from "../utils/messageExtras.js";
@@ -153,6 +154,7 @@ import {
 } from "../utils/readState.js";
 import { shouldEnforceScreenshotProtection } from "../utils/screenshotProtection.js";
 import { playReceiveSound, playSendSound, startIncomingRingSound, unlockAudio } from "../utils/sounds.js";
+
 const DEFAULT_CHAT_THEME = { presetId: 'default', bubbleColorId: 'default', wallpaperId: 'none' };
 
 const MAX_VOICE_SECONDS = 60;
@@ -236,6 +238,20 @@ function isSameDay(d1, d2) {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
+}
+
+/** Whether a message belongs to a Clear-chat scope bucket. */
+function messageMatchesClearScope(message, scope) {
+  if (scope === "all") return true;
+  const category = message?.mediaCategory;
+  const hasAttachment = Boolean(
+    message?.attachment &&
+      (typeof message.attachment === "object"
+        ? message.attachment.id || message.attachment._id
+        : message.attachment),
+  );
+  if (scope === "text") return !category && !hasAttachment;
+  return category === scope;
 }
 
 export default function Chat() {
@@ -421,17 +437,18 @@ export default function Chat() {
       .catch(() => { }); // Non-critical — the picker just won't open without it; chat still works.
   }, [hasLocalKeyring]);
 
-  useEffect(() => {
+ useEffect(() => {
     setThemeModalOpen(false);
 
-    if (!selected || selected.type !== "dm") {
+    if (!selected || (selected.type !== "dm" && selected.type !== "group")) {
       setChatTheme(DEFAULT_CHAT_THEME);
       return;
     }
 
     let cancelled = false;
+    const fetcher = selected.type === "group" ? fetchGroupChatTheme : fetchChatTheme;
 
-    fetchChatTheme(selected.id).then((theme) => {
+    fetcher(selected.id).then((theme) => {
       if (!cancelled) {
         setChatTheme(theme);
       }
@@ -445,10 +462,10 @@ export default function Chat() {
   // The custom wallpaper endpoint returns raw bytes (auth-gated, owner-only)
   // rather than a public URL, so it has to be fetched as a blob and turned
   // into an object URL, same as attachment previews elsewhere in this app.
-  useEffect(() => {
+useEffect(() => {
     if (
       !selected ||
-      selected.type !== "dm" ||
+      (selected.type !== "dm" && selected.type !== "group") ||
       chatTheme.wallpaperId !== "custom"
     ) {
       setCustomWallpaperUrl(null);
@@ -457,8 +474,9 @@ export default function Chat() {
 
     let cancelled = false;
     let urlToRevoke = null;
+    const fetchUrl = selected.type === "group" ? fetchGroupWallpaperImageUrl : fetchWallpaperImageUrl;
 
-    fetchWallpaperImageUrl(selected.id).then((url) => {
+    fetchUrl(selected.id).then((url) => {
       if (cancelled) {
         URL.revokeObjectURL(url);
         return;
@@ -2144,10 +2162,9 @@ export default function Chat() {
     }
 
     function handleChatCleared(payload = {}) {
-      // Multi-device sync: another of this user's sessions cleared a chat. If
-      // we're viewing that same conversation, empty it here too. The backend
-      // already filters cleared messages out of fetch/sync, so nothing stale
-      // reappears on a later refresh.
+      // Multi-device sync: another of this user's sessions cleared a chat.
+      // Scoped clears (photos only, etc.) must NOT wipe the whole thread —
+      // only drop matching messages. Full "all" clears empty the view.
       const current = selectedRef.current;
       if (!current) return;
       const matchesGroup =
@@ -2158,9 +2175,56 @@ export default function Chat() {
         payload.peerId &&
         current.type === "dm" &&
         String(current.id) === String(payload.peerId);
-      if (matchesGroup || matchesDm) {
+      if (!matchesGroup && !matchesDm) return;
+
+      const scopes = Array.isArray(payload.scopes) && payload.scopes.length
+        ? payload.scopes.map(String)
+        : ["all"];
+      if (scopes.includes("all")) {
         setMessages([]);
+        return;
       }
+
+      const clearedAtMs = payload.clearedAt
+        ? new Date(payload.clearedAt).getTime()
+        : Date.now();
+
+      setMessages((prev) =>
+        prev.filter((m) => {
+          const createdMs = new Date(m.createdAt || 0).getTime();
+          if (createdMs > clearedAtMs) return true;
+          return !scopes.some((scope) => messageMatchesClearScope(m, scope));
+        }),
+      );
+    }
+
+    function handleChatClearUndone(payload = {}) {
+      // Another of this user's sessions undid a clear — re-fetch if we're
+      // looking at that conversation so hidden messages come back.
+      const current = selectedRef.current;
+      if (!current) return;
+      const matchesGroup =
+        payload.groupId &&
+        current.type === "group" &&
+        String(current.id) === String(payload.groupId);
+      const matchesDm =
+        payload.peerId &&
+        current.type === "dm" &&
+        String(current.id) === String(payload.peerId);
+      if (!matchesGroup && !matchesDm) return;
+
+      const endpoint =
+        current.type === "group"
+          ? `/groups/${current.id}/messages`
+          : `/messages/${current.id}`;
+      setLoadingMessages(true);
+      client
+        .get(endpoint, { params: { limit: 80, markRead: 0 } })
+        .then((res) => {
+          setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+        })
+        .catch(() => {})
+        .finally(() => setLoadingMessages(false));
     }
 
     function handleUserStatus(payload = {}) {
@@ -2209,6 +2273,7 @@ export default function Chat() {
     socket.on("friend:request:accepted", handleFriendRequestAccepted);
     socket.on("friend:removed", handleFriendRemoved);
     socket.on("chat:cleared", handleChatCleared);
+    socket.on("chat:clear-undone", handleChatClearUndone);
     socket.on("user:status", handleUserStatus);
 
     // Auth may connect the socket before Chat mounts, so the initial
@@ -2244,6 +2309,7 @@ export default function Chat() {
       socket.off("friend:request:accepted", handleFriendRequestAccepted);
       socket.off("friend:removed", handleFriendRemoved);
       socket.off("chat:cleared", handleChatCleared);
+      socket.off("chat:clear-undone", handleChatClearUndone);
       socket.off("user:status", handleUserStatus);
   socket.off("connect", requestPresence);
   stopTyping({ emit: false });
@@ -3713,8 +3779,33 @@ export default function Chat() {
     if (!selected) return;
     const type = selected.type;
     const id = selected.id;
+    const conversationKey = selected.key;
     const clearingStarred = scopes.includes("starred");
-    const serverScopes = scopes.filter((s) => s !== "starred");
+    const CONTENT_SCOPES = ["photo", "video", "voice", "document", "text"];
+    let serverScopes = scopes.filter((s) => s !== "starred");
+    // Selecting every content type is a full clear — use the single 'all'
+    // watermark so we don't leave five overlapping scoped entries.
+    if (CONTENT_SCOPES.every((k) => serverScopes.includes(k))) {
+      serverScopes = ["all"];
+    }
+
+    // Snapshot for Undo (toast stays up ~8s).
+    const previousClearedEntries = (user.clearedConversations || [])
+      .filter((c) => c && c.conversationKey === conversationKey)
+      .map((c) => ({
+        conversationKey: c.conversationKey,
+        scope: c.scope || "all",
+        clearedAt: c.clearedAt,
+      }));
+    const previousMessages =
+      selectedRef.current &&
+      selectedRef.current.type === type &&
+      String(selectedRef.current.id) === String(id)
+        ? messages
+        : null;
+    const previousStarredEntries = clearingStarred
+      ? getStarredEntries(user.id)
+      : null;
 
     try {
       setClearChatBusy(true);
@@ -3737,24 +3828,95 @@ export default function Chat() {
 
       const current = selectedRef.current;
       if (current && current.type === type && String(current.id) === String(id)) {
-        // Re-fetch rather than blanking outright — a scoped clear (e.g. just
-        // photos) should still leave the remaining messages visible.
-        setLoadingMessages(true);
-        const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
-        try {
-          const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
-          setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
-        } finally {
-          setLoadingMessages(false);
+        if (serverScopes.includes("all")) {
+          setMessages([]);
+        } else if (serverScopes.length) {
+          // Re-fetch rather than blanking outright — a scoped clear (e.g. just
+          // photos) should still leave the remaining messages visible.
+          setLoadingMessages(true);
+          const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
+          try {
+            const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
+            setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+          } finally {
+            setLoadingMessages(false);
+          }
         }
       }
 
-      showToast("Chat cleared", "success");
+      const toastLabel = serverScopes.includes("all")
+        ? "Chat cleared"
+        : serverScopes.length
+          ? "Selected messages cleared"
+          : clearingStarred
+            ? "Starred messages cleared"
+            : "Chat cleared";
+
+      let undoUsed = false;
+      showToast(toastLabel, "success", 8000, {
+        actionLabel: "Undo",
+        onAction: () => {
+          if (undoUsed) return;
+          undoUsed = true;
+          void undoClearChat({
+            type,
+            id,
+            previousClearedEntries,
+            previousMessages,
+            previousStarredEntries,
+            hadServerClear: serverScopes.length > 0,
+          });
+        },
+      });
       setClearChatOpen(false);
     } catch (err) {
       showToast(err.response?.data?.error || "Failed to clear chat", "error");
     } finally {
       setClearChatBusy(false);
+    }
+  }
+
+  async function undoClearChat({
+    type,
+    id,
+    previousClearedEntries,
+    previousMessages,
+    previousStarredEntries,
+    hadServerClear,
+  }) {
+    try {
+      if (hadServerClear) {
+        const payload =
+          type === "group"
+            ? { groupId: id, restoreEntries: previousClearedEntries }
+            : { peerId: id, restoreEntries: previousClearedEntries };
+        const { data } = await client.post("/users/me/clear-chat/undo", payload);
+        if (data?.data) updateSessionUser(data.data);
+      }
+
+      if (previousStarredEntries) {
+        setStarredIds(restoreStarredEntries(user.id, previousStarredEntries));
+      }
+
+      const current = selectedRef.current;
+      if (current && current.type === type && String(current.id) === String(id)) {
+        if (Array.isArray(previousMessages)) {
+          setMessages(previousMessages);
+        } else {
+          setLoadingMessages(true);
+          const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
+          try {
+            const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
+            setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+          } finally {
+            setLoadingMessages(false);
+          }
+        }
+      }
+
+      showToast("Clear undone", "success", 2500);
+    } catch (err) {
+      showToast(err.response?.data?.error || "Could not undo clear", "error");
     }
   }
   async function handleUnblockUser(peerId) {
@@ -6321,10 +6483,10 @@ export default function Chat() {
                     onClearChat={handleClearChat}
                     onSearch={() => setSearchOpen(true)}
                     onWallpaper={
-                      selected.type === "dm" && !selected.isSelfChat
-                        ? () => setThemeModalOpen(true)
-                        : undefined
-                    }
+  selected.type === "group" || (selected.type === "dm" && !selected.isSelfChat)
+    ? () => setThemeModalOpen(true)
+    : undefined
+}
                     onStarred={() => {
                       setStarredScope("chat");
                       setShowStarredMessages(true);
@@ -6894,15 +7056,16 @@ export default function Chat() {
           </>
         )}
       </main>
-      {themeModalOpen && selected && (
-        <ChatThemeModal
-          peerId={selected.id}
-          theme={chatTheme}
-          catalog={themeCatalog}
-          onApplied={(updated) => setChatTheme(updated)}
-          onClose={() => setThemeModalOpen(false)}
-        />
-      )}
+      {themeModalOpen && selected && (selected.type === "dm" || selected.type === "group") && (
+  <ChatThemeModal
+    peerId={selected.type === "dm" ? selected.id : undefined}
+    groupId={selected.type === "group" ? selected.id : undefined}
+    theme={chatTheme}
+    catalog={themeCatalog}
+    onApplied={(updated) => setChatTheme(updated)}
+    onClose={() => setThemeModalOpen(false)}
+  />
+)}
 
       {aiPanelOpen && (
         <AIAssistantPanel
@@ -7051,16 +7214,19 @@ export default function Chat() {
       )}
 
       {showGroupSettings && activeGroup && (
-        <GroupSettingsModal
-          group={activeGroup}
-          currentUserId={user.id}
-          users={users}
-          onClose={() => setShowGroupSettings(false)}
-          onUpdated={mergeUpdatedGroup}
-          onLeftOrDeleted={handleLeftOrDeletedGroup}
-        />
-      )}
-
+  <GroupSettingsModal
+    group={activeGroup}
+    currentUserId={user.id}
+    users={users}
+    onClose={() => setShowGroupSettings(false)}
+    onUpdated={mergeUpdatedGroup}
+    onLeftOrDeleted={handleLeftOrDeletedGroup}
+    onOpenChatTheme={() => {
+      setShowGroupSettings(false);
+      setThemeModalOpen(true);
+    }}
+  />
+)}
       {profileUserId && (
         <UserProfileModal
           userId={profileUserId}

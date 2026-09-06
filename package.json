@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "start": "vite --open",
+    "dev": "vite --open",
     "build": "vite build",
     "preview": "vite preview",
     "test:crypto": "node --test --test-concurrency=1 \"test/crypto/**/*.test.js\""
