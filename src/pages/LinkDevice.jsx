@@ -273,7 +273,7 @@ export default function LinkDevicePage() {
         <div className="settings-fieldset" style={{ marginBottom: 16 }}>
           <h3 className="settings-section-title">Pairing</h3>
           <p className="settings-section-copy">{statusText}</p>
-          {error ? <p className="settings-section-copy" style={{ color: 'var(--danger-color, #d45d5d)' }}>{error}</p> : null}
+          {error ? <p className="settings-section-copy" style={{ color: 'var(--danger)' }}>{error}</p> : null}
           <div className="settings-key-actions" style={{ marginTop: 12 }}>
             <button type="button" className="settings-btn primary" onClick={startLinkFlow} disabled={loading || linkState === 'waiting'}>
               {loading ? 'Preparing…' : 'Create QR code'}
@@ -317,7 +317,7 @@ export default function LinkDevicePage() {
               {emailBusy ? 'Sending…' : 'Send link by email'}
             </button>
           </div>
-          {emailMessage ? <p className="settings-section-copy" style={{ color: 'var(--success-color, #2e8b57)' }}>{emailMessage}</p> : null}
+          {emailMessage ? <p className="settings-section-copy" style={{ color: 'var(--success)' }}>{emailMessage}</p> : null}
         </div>
       </div>
     </div>

@@ -334,6 +334,50 @@
   color: #cbd5e1;
 }
 
+/* Light theme overrides for activity items and icon badges (WCAG AA compliant) */
+[data-theme='light'] .activity-item:hover,
+[data-theme='light'] .activity-item:focus-visible,
+body.theme-light .activity-item:hover,
+body.theme-light .activity-item:focus-visible {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: var(--border-subtle);
+}
+
+[data-theme='light'] .activity-item-icon.type-friend_request,
+body.theme-light .activity-item-icon.type-friend_request {
+  background: var(--accent-muted);
+  border-color: rgba(13, 148, 136, 0.35);
+  color: var(--accent);
+}
+
+[data-theme='light'] .activity-item-icon.type-group,
+body.theme-light .activity-item-icon.type-group {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.35);
+  color: #6d28d9;
+}
+
+[data-theme='light'] .activity-item-icon.type-mention,
+body.theme-light .activity-item-icon.type-mention {
+  background: #fffbeb;
+  border-color: rgba(245, 158, 11, 0.4);
+  color: var(--warning-text, #b45309);
+}
+
+[data-theme='light'] .activity-item-icon.type-reaction,
+body.theme-light .activity-item-icon.type-reaction {
+  background: rgba(225, 29, 72, 0.1);
+  border-color: rgba(225, 29, 72, 0.35);
+  color: #be123c;
+}
+
+[data-theme='light'] .activity-item-icon.type-default,
+body.theme-light .activity-item-icon.type-default {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
 /* Item Content */
 .activity-item-main {
   flex: 1 1 auto;
