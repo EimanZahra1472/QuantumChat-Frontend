@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { connectSocket, getSocket } from '../api/socket.js';
 import { saveSession } from '../crypto/keyStorage.js';
+import QrCodeScanner from '../components/QrCodeScanner.jsx';
 import {
   claimDeviceLinkSession,
   createDeviceLinkRequest,
@@ -29,6 +30,7 @@ function getDeviceLabel() {
 
 export default function LinkDevicePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, updateSessionUser } = useAuth();
   const [linkState, setLinkState] = useState('idle');
   const [loading, setLoading] = useState(false);
@@ -43,16 +45,23 @@ export default function LinkDevicePage() {
   const [email, setEmail] = useState('');
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMessage, setEmailMessage] = useState('');
-  const [pollTimer, setPollTimer] = useState(null);
-  const [polling, setPolling] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [hasKeys, setHasKeys] = useState(true);
   const intervalRef = useRef(null);
+  const pollTimerRef = useRef(null);
+  const pollingRef = useRef(false);
+  const claimingRef = useRef(false);
+  const verificationRef = useRef(false);
 
-  const deviceLabel = useMemo(() => getDeviceLabel(), []);
+  useEffect(() => {
+    if (searchParams.get('scan') === '1') setScannerOpen(true);
+  }, [searchParams]);
 
   useEffect(() => {
     return () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current);
+      if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+      pollingRef.current = false;
     };
   }, []);
 
@@ -81,30 +90,47 @@ export default function LinkDevicePage() {
   }, [user]);
 
   const stopPolling = () => {
-    if (pollTimer) clearTimeout(pollTimer);
-    setPollTimer(null);
-    setPolling(false);
+    if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    pollTimerRef.current = null;
+    pollingRef.current = false;
+  };
+
+  const finishLogin = (result) => {
+    if (!result?.token) throw new Error('No session credentials were returned.');
+    saveSession(result.token, result.user, result.sessionId);
+    updateSessionUser(result.user);
+    connectSocket();
+    navigate('/chat', { replace: true });
+  };
+
+  const claimSession = async (nextLinkId, nextToken) => {
+    if (claimingRef.current) return;
+    claimingRef.current = true;
+    stopPolling();
+    setStatusText('Approval received. Signing you in…');
+    try {
+      const result = await claimDeviceLinkSession({ linkId: nextLinkId, token: nextToken });
+      finishLogin(result);
+    } catch {
+      claimingRef.current = false;
+      setLinkState('idle');
+      setError('The device was approved but the session could not be claimed.');
+    }
   };
 
   const startPolling = (nextLinkId, nextToken) => {
     stopPolling();
+    pollingRef.current = true;
     const poll = async () => {
+      if (!pollingRef.current) return;
       try {
         const result = await pollDeviceLinkStatus({ linkId: nextLinkId, token: nextToken });
-        if (result?.status === 'approved' || result?.status === 'verified') {
-          setStatusText(result?.status === 'approved' ? 'The device is being approved…' : 'Waiting for approval…');
+        if (result?.status === 'verified') {
+          setStatusText('Device detected. Waiting for approval from your existing device…');
         }
-        if (result?.status === 'approved' || result?.status === 'used') {
+        if (result?.status === 'used' && result?.token) {
           stopPolling();
-          if (result?.status === 'used') {
-            setStatusText('Link approved. Signing you in…');
-            if (result?.token) {
-              saveSession(result.token, result.user, result.sessionId);
-              updateSessionUser(result.user);
-              connectSocket();
-              navigate('/chat', { replace: true });
-            }
-          }
+          finishLogin(result);
           return;
         }
         if (result?.status === 'rejected') {
@@ -121,17 +147,24 @@ export default function LinkDevicePage() {
           return;
         }
       } catch (err) {
-        if (String(err?.message || '').includes('410') || String(err?.response?.status).includes('410')) {
+        const status = err?.response?.status;
+        if (status === 403) {
+          stopPolling();
+          setLinkState('rejected');
+          setStatusText('The request was rejected on your existing device.');
+          setError('');
+          return;
+        }
+        if (status === 410 || String(err?.message || '').includes('410')) {
           stopPolling();
           setLinkState('expired');
           setStatusText('The pairing link expired.');
           return;
         }
       }
-      setPollTimer(window.setTimeout(poll, 2000));
+      if (pollingRef.current) pollTimerRef.current = window.setTimeout(poll, 2000);
     };
-    setPolling(true);
-    setPollTimer(window.setTimeout(poll, 1500));
+    pollTimerRef.current = window.setTimeout(poll, 1500);
   };
 
   const startLinkFlow = async () => {
@@ -160,16 +193,16 @@ export default function LinkDevicePage() {
     }
   };
 
-  const handleManualImport = async () => {
-    if (!payloadText) {
-      setError('Paste the QR payload or link URL first.');
-      return;
-    }
-    const parsed = parseQrPayload(payloadText);
+  const verifyPayload = async (rawPayload) => {
+    if (verificationRef.current) return;
+    const parsed = parseQrPayload(rawPayload);
     if (!parsed) {
-      setError('That payload could not be read. Paste the QR payload from the link request.');
+      setError('This does not appear to be a valid QuantumChat device-link QR code.');
+      setLinkState('idle');
       return;
     }
+    verificationRef.current = true;
+    setScannerOpen(false);
     setLoading(true);
     setError('');
     setStatusText('Verifying the link request…');
@@ -184,14 +217,23 @@ export default function LinkDevicePage() {
       setToken(parsed.token);
       setExpiresAt(verifyResult?.expiresAt || null);
       setLinkState('waiting');
-      setStatusText('Waiting for approval…');
+      setStatusText('Device detected. Waiting for approval from your existing device…');
       startPolling(parsed.linkId, parsed.token);
     } catch (err) {
       setError(err?.response?.data?.error || err?.message || 'Unable to verify the link request.');
       setLinkState('idle');
     } finally {
+      verificationRef.current = false;
       setLoading(false);
     }
+  };
+
+  const handleManualImport = async () => {
+    if (!payloadText) {
+      setError('Paste the QR payload or link URL first.');
+      return;
+    }
+    await verifyPayload(payloadText);
   };
 
   const handleEmailSend = async () => {
@@ -199,7 +241,8 @@ export default function LinkDevicePage() {
       setError('Create a pairing request first.');
       return;
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const [emailLocalPart, emailDomain] = email.split('@');
+    if (!emailLocalPart || !emailDomain?.includes('.')) {
       setError('Enter a valid email address.');
       return;
     }
@@ -222,22 +265,9 @@ export default function LinkDevicePage() {
       connectSocket();
       return;
     }
-    const handleApproved = ({ linkId: approvedLinkId, sessionId }) => {
+    const handleApproved = ({ linkId: approvedLinkId }) => {
       if (approvedLinkId !== linkId) return;
-      setStatusText('Approval received. Claiming the session…');
-      claimDeviceLinkSession({ linkId, token })
-        .then((result) => {
-          if (result?.token) {
-            saveSession(result.token, result.user, result.sessionId);
-            updateSessionUser(result.user);
-            connectSocket();
-            navigate('/chat', { replace: true });
-          }
-        })
-        .catch(() => {
-          setError('The device was approved but the session could not be claimed.');
-          setLinkState('idle');
-        });
+      void claimSession(linkId, token);
     };
     const handleRejected = ({ linkId: rejectedLinkId }) => {
       if (rejectedLinkId !== linkId) return;
@@ -275,6 +305,9 @@ export default function LinkDevicePage() {
           <p className="settings-section-copy">{statusText}</p>
           {error ? <p className="settings-section-copy" style={{ color: 'var(--danger-color, #d45d5d)' }}>{error}</p> : null}
           <div className="settings-key-actions" style={{ marginTop: 12 }}>
+            <button type="button" className="settings-btn primary" onClick={() => { setError(''); setScannerOpen(true); }} disabled={loading || linkState === 'waiting'}>
+              Scan QR code
+            </button>
             <button type="button" className="settings-btn primary" onClick={startLinkFlow} disabled={loading || linkState === 'waiting'}>
               {loading ? 'Preparing…' : 'Create QR code'}
             </button>
@@ -293,6 +326,14 @@ export default function LinkDevicePage() {
             </p>
           ) : null}
         </div>
+
+        {scannerOpen ? (
+          <QrCodeScanner
+            onDetected={verifyPayload}
+            onError={(message) => { setScannerOpen(false); setError(message); }}
+            onCancel={() => setScannerOpen(false)}
+          />
+        ) : null}
 
         <div className="settings-fieldset" style={{ marginBottom: 16 }}>
           <h3 className="settings-section-title">Paste QR payload</h3>
