@@ -3,6 +3,7 @@ import client from '../api/client.js';
 import { unsealBytes } from '../crypto/keys.js';
 import { attachmentIdOf, normalizeAttachment, pickAttachmentEnvelope } from '../crypto/voiceCache.js';
 import { useNotificationSettings } from '../context/NotificationSettingsContext.jsx';
+import VoicePlayer from './VoicePlayer.jsx';
 
 function FileIcon({ className }) {
   return (
@@ -100,116 +101,6 @@ function typeLabel(kind) {
   if (kind === 'image') return 'Image';
   if (kind === 'audio') return 'Audio';
   return 'File';
-}
-function VoicePlayer({ url, onPlayedThrough }) {
-  const audioRef = useRef(null);
-  const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const burnedRef = useRef(false);
-  const fixingDurationRef = useRef(false);
-
-  useEffect(() => {
-    return () => {
-      audioRef.current?.pause();
-    };
-  }, [url]);
-
-  function maybeBurn() {
-    if (burnedRef.current) return;
-    burnedRef.current = true;
-    onPlayedThrough?.();
-  }
-
-  // MediaRecorder webm blobs (Chrome/Android) don't carry a real duration
-  // header — audio.duration comes back Infinity/NaN on loadedmetadata.
-  // Standard workaround: seek to a huge time, which forces the browser to
-  // resolve the true duration, then seek back to 0.
-  function fixInfiniteDuration(audio) {
-    if (fixingDurationRef.current) return;
-    fixingDurationRef.current = true;
-    audio.currentTime = 1e101;
-    const onTimeUpdate = () => {
-      audio.removeEventListener('timeupdate', onTimeUpdate);
-      audio.currentTime = 0;
-      if (Number.isFinite(audio.duration)) setDuration(audio.duration);
-      fixingDurationRef.current = false;
-    };
-    audio.addEventListener('timeupdate', onTimeUpdate);
-  }
-
-  async function togglePlay() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    try {
-      if (audio.paused) {
-        await audio.play();
-        setPlaying(true);
-      } else {
-        audio.pause();
-        setPlaying(false);
-      }
-    } catch {
-      setPlaying(false);
-    }
-  }
-
-  // WhatsApp-style: show total duration at rest, count up elapsed while playing.
-  const displaySeconds = playing || currentTime > 0 ? currentTime : duration;
-
-  return (
-    <div className="voice-player">
-      <audio
-        ref={audioRef}
-        src={url}
-        preload="metadata"
-        onLoadedMetadata={(e) => {
-          const audio = e.currentTarget;
-          const d = audio.duration;
-          if (Number.isFinite(d) && d > 0) {
-            setDuration(d);
-          } else {
-            fixInfiniteDuration(audio);
-          }
-        }}
-        onDurationChange={(e) => {
-          const d = e.currentTarget.duration;
-          if (Number.isFinite(d) && d > 0) setDuration(d);
-        }}
-        onTimeUpdate={(e) => {
-          const a = e.currentTarget;
-          if (fixingDurationRef.current) return; // ignore the seek-probe tick
-          setCurrentTime(a.currentTime);
-          setProgress(a.duration && Number.isFinite(a.duration) ? a.currentTime / a.duration : 0);
-        }}
-        onEnded={() => {
-          setPlaying(false);
-          setProgress(0);
-          setCurrentTime(0);
-          maybeBurn();
-        }}
-        onPause={() => setPlaying(false)}
-        onPlay={() => setPlaying(true)}
-      />
-      <button type="button" className="voice-play-btn" onClick={togglePlay} aria-label={playing ? 'Pause voice note' : 'Play voice note'}>
-        {playing ? (
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="5" width="4" height="14" rx="1" />
-            <rect x="14" y="5" width="4" height="14" rx="1" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="6,4 20,12 6,20" />
-          </svg>
-        )}
-      </button>
-      <div className="voice-wave">
-        <div className="voice-wave-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
-      </div>
-      <span className="voice-duration">{formatDuration(displaySeconds)}</span>
-    </div>
-  );
 }
 
 function triggerDownload(url, filename) {
@@ -555,7 +446,7 @@ export default function AttachmentBubble({
   }
 
   if (kind === 'audio' && objectUrl) {
-    return <VoicePlayer url={objectUrl} />;
+    return <VoicePlayer url={objectUrl} onPlayedThrough={viewOnce ? onBurnViewOnce : undefined} isMine={isMine} />;
   }
 
   if (kind === 'image' && objectUrl) {

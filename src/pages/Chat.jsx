@@ -3451,9 +3451,9 @@ useEffect(() => {
                 fontSize: '0.8rem',
                 fontWeight: '600',
                 borderRadius: '4px',
-                border: 'none',
-                background: '#ffffff',
-                color: '#111827',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
                 cursor: 'pointer',
                 marginTop: '2px',
               }}
@@ -6935,7 +6935,7 @@ useEffect(() => {
                                   style={{
                                     fontSize: 11,
                                     fontWeight: 600,
-                                    color: "#b45309",
+                                    color: "var(--warning-text, #fbbf24)",
                                   }}
                                 >
                                   {reason === "mentions_off"
