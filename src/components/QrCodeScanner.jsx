@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import QrScanner from 'qr-scanner';
 
+function prefersRearCamera() {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '') || navigator.userAgentData?.mobile === true;
+}
+
 export default function QrCodeScanner({ onDetected, onError, onCancel }) {
   const videoRef = useRef(null);
   const scannerRef = useRef(null);
@@ -17,7 +22,7 @@ export default function QrCodeScanner({ onDetected, onError, onCancel }) {
     async function startScanner() {
       if (!videoRef.current) return;
       if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-        callbacksRef.current.onError?.('Camera access requires a secure browser connection (HTTPS or localhost).');
+        callbacksRef.current.onError?.('Camera access requires HTTPS or localhost. A camera cannot be used from an insecure HTTP network address.');
         return;
       }
 
@@ -38,7 +43,7 @@ export default function QrCodeScanner({ onDetected, onError, onCancel }) {
             callbacksRef.current.onDetected?.(result?.data || result);
           },
           {
-            preferredCamera: 'environment',
+            preferredCamera: prefersRearCamera() ? 'environment' : 'user',
             returnDetailedScanResult: true,
             highlightScanRegion: false,
             highlightCodeOutline: true,

@@ -6,22 +6,11 @@ import { saveSession } from '../crypto/keyStorage.js';
 import QrCodeScanner from '../components/QrCodeScanner.jsx';
 import {
   claimDeviceLinkSession,
-  createDeviceLinkRequest,
   parseQrPayload,
   pollDeviceLinkStatus,
   sendDeviceLinkEmail,
   verifyDeviceLink,
-  buildQrPayload,
 } from '../api/deviceLink.js';
-import QRCode from 'qrcode';
-
-function formatTimeLeft(ms) {
-  if (ms <= 0) return 'Expired';
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
 
 function getDeviceLabel() {
   if (typeof navigator === 'undefined') return 'This device';
@@ -37,17 +26,13 @@ export default function LinkDevicePage() {
   const [error, setError] = useState('');
   const [linkId, setLinkId] = useState('');
   const [token, setToken] = useState('');
-  const [qrDataUrl, setQrDataUrl] = useState('');
-  const [expiresAt, setExpiresAt] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [statusText, setStatusText] = useState('Create a pairing request to continue.');
+  const [statusText, setStatusText] = useState('Scan the QR code shown on your existing device to continue.');
   const [payloadText, setPayloadText] = useState('');
   const [email, setEmail] = useState('');
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMessage, setEmailMessage] = useState('');
   const [scannerOpen, setScannerOpen] = useState(false);
   const [hasKeys, setHasKeys] = useState(true);
-  const intervalRef = useRef(null);
   const pollTimerRef = useRef(null);
   const pollingRef = useRef(false);
   const claimingRef = useRef(false);
@@ -59,29 +44,10 @@ export default function LinkDevicePage() {
 
   useEffect(() => {
     return () => {
-      if (intervalRef.current) window.clearInterval(intervalRef.current);
       if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
       pollingRef.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!expiresAt) return undefined;
-    const tick = () => {
-      const diff = new Date(expiresAt).getTime() - Date.now();
-      setTimeLeft(Math.max(0, diff));
-      if (diff <= 0) {
-        setLinkState('expired');
-        setStatusText('The pairing link expired. Create a new one to continue.');
-        setError('');
-      }
-    };
-    tick();
-    intervalRef.current = window.setInterval(tick, 1000);
-    return () => {
-      if (intervalRef.current) window.clearInterval(intervalRef.current);
-    };
-  }, [expiresAt]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -167,32 +133,6 @@ export default function LinkDevicePage() {
     pollTimerRef.current = window.setTimeout(poll, 1500);
   };
 
-  const startLinkFlow = async () => {
-    setLoading(true);
-    setError('');
-    setLinkState('creating');
-    setStatusText('Preparing a new device link…');
-    try {
-      const payload = await createDeviceLinkRequest();
-      const nextLinkId = payload.linkId;
-      const nextToken = payload.token;
-      setLinkId(nextLinkId);
-      setToken(nextToken);
-      setExpiresAt(payload.expiresAt);
-      const qrPayload = buildQrPayload(nextLinkId, nextToken);
-      const qrUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 240 });
-      setQrDataUrl(qrUrl);
-      setLinkState('waiting');
-      setStatusText('Scan the QR code or paste the payload from the device you want to link.');
-      startPolling(nextLinkId, nextToken);
-    } catch (err) {
-      setError(err?.response?.data?.error || err?.message || 'Unable to create a pairing request.');
-      setLinkState('idle');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const verifyPayload = async (rawPayload) => {
     if (verificationRef.current) return;
     const parsed = parseQrPayload(rawPayload);
@@ -207,7 +147,7 @@ export default function LinkDevicePage() {
     setError('');
     setStatusText('Verifying the link request…');
     try {
-      const verifyResult = await verifyDeviceLink({
+      await verifyDeviceLink({
         linkId: parsed.linkId,
         token: parsed.token,
         deviceLabel: getDeviceLabel(),
@@ -215,7 +155,6 @@ export default function LinkDevicePage() {
       });
       setLinkId(parsed.linkId);
       setToken(parsed.token);
-      setExpiresAt(verifyResult?.expiresAt || null);
       setLinkState('waiting');
       setStatusText('Device detected. Waiting for approval from your existing device…');
       startPolling(parsed.linkId, parsed.token);
@@ -308,23 +247,10 @@ export default function LinkDevicePage() {
             <button type="button" className="settings-btn primary" onClick={() => { setError(''); setScannerOpen(true); }} disabled={loading || linkState === 'waiting'}>
               Scan QR code
             </button>
-            <button type="button" className="settings-btn primary" onClick={startLinkFlow} disabled={loading || linkState === 'waiting'}>
-              {loading ? 'Preparing…' : 'Create QR code'}
-            </button>
-            <button type="button" className="settings-btn ghost" onClick={() => { stopPolling(); setLinkState('idle'); setError(''); setStatusText('Create a pairing request to continue.'); }}>
+            <button type="button" className="settings-btn ghost" onClick={() => { stopPolling(); setLinkState('idle'); setError(''); setStatusText('Scan the QR code shown on your existing device to continue.'); }}>
               Cancel
             </button>
           </div>
-          {qrDataUrl ? (
-            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
-              <img src={qrDataUrl} alt="Device pairing QR code" style={{ width: 220, height: 220, background: '#fff', padding: 12, borderRadius: 12 }} />
-            </div>
-          ) : null}
-          {expiresAt ? (
-            <p className="settings-section-copy" style={{ marginTop: 12 }}>
-              Expires in {formatTimeLeft(timeLeft)}
-            </p>
-          ) : null}
         </div>
 
         {scannerOpen ? (
