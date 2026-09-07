@@ -15,8 +15,8 @@ import {
 import { COMPOSER_EMOJIS, searchEmojis } from '../utils/emojis.js';
 import { playNotificationSound, shouldNotify, showNotificationPopup } from '../utils/notificationDispatch.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
-import SaveToHighlightSheet from './SaveToHighlightSheet.jsx';
-import StoryDraftsPanel from './StoryDraftsPanel.jsx';
+import HighlightPickerSheet from './HighlightPickerSheet.jsx';
+import StoryHistoryPanel from './StoryHistoryPanel.jsx';
 import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
 import TextStoryComposer from './TextStoryComposer.jsx';
 import UserAvatar from './UserAvatar.jsx';
@@ -241,7 +241,8 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   const [unavailable, setUnavailable] = useState(false);
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
   const [textComposerOpen, setTextComposerOpen] = useState(false);
-  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+ const [historyTab, setHistoryTab] = useState('drafts');
   const [draftCount, setDraftCount] = useState(0);
   const [fabHost, setFabHost] = useState(null);
   const mediaInputRef = useRef(null);
@@ -582,8 +583,8 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     if (ok) closeComposer();
   }
 
-  async function openDraftPreview(draft) {
-    setDraftsOpen(false);
+   async function openDraftPreview(draft) {
+    setHistoryOpen(false);
     try {
       setUnavailable(false);
       setViewer({
@@ -601,7 +602,10 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       onError?.('Could not open draft preview');
     }
   }
-
+  function openActiveStoryPreview(items, index) {
+    setUnavailable(false);
+    setViewer({ group: { user: currentUser, items }, index });
+  }
   useImperativeHandle(ref, () => ({
     async openStoryById(storyId) {
       try {
@@ -752,15 +756,18 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         />
       )}
 
-      <StoryDraftsPanel
-        open={draftsOpen}
-        onClose={() => setDraftsOpen(false)}
+       <StoryHistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        currentUserId={currentUser?.id}
+        initialTab={historyTab}
         onError={onError}
         onChanged={() => {
           loadStories();
           loadDraftsCount();
         }}
         onPreviewDraft={openDraftPreview}
+        onPreviewStory={openActiveStoryPreview}
       />
 
       {createSheetOpen &&
@@ -834,18 +841,19 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                   className="status-create-option"
                   onClick={() => {
                     setCreateSheetOpen(false);
-                    setDraftsOpen(true);
+                     setHistoryTab('drafts');
+                    setHistoryOpen(true);
                   }}
                 >
                   <span className="status-create-icon drafts">
                     <FilePen size={22} aria-hidden />
                   </span>
                   <span className="status-create-copy">
-                    <strong>Drafts &amp; scheduled</strong>
+                    <strong>Story history</strong>
                     <small>
                       {draftCount > 0
                         ? `${draftCount} waiting — preview, edit, or publish`
-                        : 'Save drafts and schedule posts'}
+                          : 'Active, archived, and drafts'}
                     </small>
                   </span>
                 </button>
@@ -1659,7 +1667,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           />
         )}
         {isOwn && saveHighlightOpen && (
-          <SaveToHighlightSheet
+          <HighlightPickerSheet
             open={saveHighlightOpen}
             onClose={() => setSaveHighlightOpen(false)}
             onError={onError}
