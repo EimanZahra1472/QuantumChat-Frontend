@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 
+
 /**
  * Best-effort screenshot / screen-capture protection for the web app.
  *

@@ -1,4 +1,3 @@
-import { Languages } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -1786,12 +1785,40 @@ useEffect(() => {
                     value={notifSettings.statusNotifications}
                     options={[
                       { value: 'all', label: 'All Friend Statuses' },
-                      { value: 'favorites_only', label: 'Favorites Only' },
+                      { value: 'selected', label: 'Selected Friends' },
                       { value: 'off', label: 'Off' },
                     ]}
                     disabled={busy}
                     onChange={(v) => updateNotifField('statusNotifications', v)}
                   />
+  
+                  {notifSettings.statusNotifications === 'selected' && (
+                    <div className="privacy-friend-picker">
+                      <span className="privacy-select-description" style={{ marginBottom: 4 }}>
+                        Friends whose stories notify you:
+                      </span>
+                      {friendsList.length === 0 ? (
+                        <p className="privacy-select-description">No friends added yet.</p>
+                      ) : (
+                        friendsList.map((f) => {
+                          const fId = String(f.id || f._id);
+                          const isChecked = (notifSettings.statusNotificationsSelectedFriends || []).includes(fId);
+                          return (
+                            <label key={fId} className="privacy-friend-item">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                disabled={busy}
+                                onChange={() => toggleStatusNotificationFriend(fId)}
+                              />
+                              <UserAvatar userId={f.id} name={f.displayName || f.username} size="xs" />
+                              <span>{f.displayName || f.username}</span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
 
                   <PrivacySelect
                     label="Message Preview"
