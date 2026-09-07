@@ -825,8 +825,9 @@ function StoryViewersSheet({ viewerCount, viewers, onClose }) {
                 <span className="story-viewers-sheet-name">{v.username}</span>
                 <span className="story-viewers-sheet-time">
                   {new Date(v.viewedAt).toLocaleTimeString([], {
-                    hour: '2-digit',
+                    hour: 'numeric',
                     minute: '2-digit',
+                    hour12: true,
                   })}
                 </span>
               </div>
