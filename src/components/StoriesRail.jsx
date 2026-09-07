@@ -1,4 +1,4 @@
-import { Camera, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
+import { BookmarkPlus, Camera, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
@@ -15,6 +15,7 @@ import {
 import { COMPOSER_EMOJIS, searchEmojis } from '../utils/emojis.js';
 import { playNotificationSound, shouldNotify, showNotificationPopup } from '../utils/notificationDispatch.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
+import SaveToHighlightSheet from './SaveToHighlightSheet.jsx';
 import StoryDraftsPanel from './StoryDraftsPanel.jsx';
 import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
 import TextStoryComposer from './TextStoryComposer.jsx';
@@ -867,6 +868,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   const [gifQuery, setGifQuery] = useState('');
   const [gifResults, setGifResults] = useState([]);
   const [gifLoading, setGifLoading] = useState(false);
+  const [saveHighlightOpen, setSaveHighlightOpen] = useState(false);
 
   const story = group.items[index];
   const isOwn = String(group.user?.id) === String(currentUserId);
@@ -880,6 +882,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
     setBlockedReason('');
     setLoadPhase('');
     setDownloadPct(null);
+    setSaveHighlightOpen(false);
 
     if (!isOwn) {
       client.post(`/stories/${story.id}/view`).catch(() => {
@@ -1523,6 +1526,19 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
                   <Eye size={16} strokeWidth={2} />
                   <span>{viewerCount}</span>
                 </button>
+                <button
+                  type="button"
+                  className="story-highlight-btn"
+                  disabled={!mediaUrl}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setSaveHighlightOpen(true);
+                  }}
+                >
+                  <BookmarkPlus size={16} strokeWidth={2} />
+                  <span>Highlight</span>
+                </button>
                 <button type="button" className="story-delete-btn" onClick={handleDelete}>
                   Delete
                 </button>
@@ -1535,6 +1551,15 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
             viewerCount={viewerCount}
             viewers={viewers}
             onClose={() => setViewersOpen(false)}
+          />
+        )}
+        {isOwn && saveHighlightOpen && (
+          <SaveToHighlightSheet
+            open={saveHighlightOpen}
+            onClose={() => setSaveHighlightOpen(false)}
+            onError={onError}
+            mediaUrl={mediaUrl}
+            story={story}
           />
         )}
        {!isOwn && story.allowReplies !== false && (
