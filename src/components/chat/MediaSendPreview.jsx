@@ -20,6 +20,7 @@ export default function MediaSendPreview({
   compressProgress = 0,
   compressPhase = 'encoding', // 'loading' | 'encoding'
   onSend,
+  onSendAll,
   onClose,
   sending = false,
 }) {
@@ -171,16 +172,29 @@ export default function MediaSendPreview({
                 <Eye size={20} strokeWidth={2} aria-hidden="true" />
                 <span className="media-send-view-once-label">1</span>
               </button>
-
               <button
                 type="button"
                 className="media-send-submit"
                 onClick={() => onSend?.()}
                 aria-label={viewOnce ? 'Send view once' : 'Send'}
                 disabled={sending}
+                title={total > 1 ? 'Send this one' : undefined}
               >
                 <Send size={20} strokeWidth={2} aria-hidden="true" />
               </button>
+
+              {total > 1 && (
+                <button
+                  type="button"
+                  className="media-send-submit media-send-submit-all"
+                  onClick={() => onSendAll?.()}
+                  aria-label={`Send all ${total} items`}
+                  disabled={sending}
+                  title={`Send all ${total}`}
+                >
+                  Send all ({total})
+                </button>
+              )}
             </>
           )}
         </footer>
