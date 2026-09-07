@@ -1,5 +1,9 @@
 import client from './client.js';
 
+function stripJsonContentType(headers) {
+  if (headers) delete headers['Content-Type'];
+}
+
 export async function listHighlights(userId) {
   const { data } = await client.get('/highlights', {
     params: userId ? { userId } : undefined,
@@ -12,25 +16,44 @@ export async function getHighlight(id) {
   return data.data;
 }
 
-export async function addHighlightItem({ category, file, sourceStoryId, caption, durationMs, mediaType }) {
+export async function createHighlight({ name, coverFile }) {
+  const form = new FormData();
+  form.append('name', name);
+  if (coverFile) form.append('cover', coverFile);
+  const { data } = await client.post('/highlights', form, {
+    transformRequest: [(body, headers) => {
+      if (body instanceof FormData) stripJsonContentType(headers);
+      return body;
+    }],
+  });
+  return data.data;
+}
+
+export async function updateHighlight(id, { name, coverFile } = {}) {
+  const form = new FormData();
+  if (name != null) form.append('name', name);
+  if (coverFile) form.append('cover', coverFile);
+  const { data } = await client.patch(`/highlights/${id}`, form, {
+    transformRequest: [(body, headers) => {
+      if (body instanceof FormData) stripJsonContentType(headers);
+      return body;
+    }],
+  });
+  return data.data;
+}
+
+export async function addHighlightItem({ highlightId, file, sourceStoryId, caption, durationMs, mediaType }) {
   const form = new FormData();
   form.append('file', file);
-  form.append('category', category);
   if (sourceStoryId) form.append('sourceStoryId', String(sourceStoryId));
   if (caption) form.append('caption', caption);
   if (durationMs != null) form.append('durationMs', String(durationMs));
   if (mediaType) form.append('mediaType', mediaType);
-  const { data } = await client.post('/highlights/items', form, {
-    // Let the browser set multipart boundary — do not force JSON content-type.
-    headers: { 'Content-Type': 'multipart/form-data' },
-    transformRequest: [
-      (body, headers) => {
-        if (body instanceof FormData) {
-          delete headers['Content-Type'];
-        }
-        return body;
-      },
-    ],
+  const { data } = await client.post(`/highlights/${highlightId}/items`, form, {
+    transformRequest: [(body, headers) => {
+      if (body instanceof FormData) stripJsonContentType(headers);
+      return body;
+    }],
   });
   return data.data;
 }
@@ -46,15 +69,11 @@ export async function deleteHighlightItem(highlightId, itemId) {
 }
 
 export async function fetchHighlightCoverBlob(highlightId) {
-  const { data } = await client.get(`/highlights/${highlightId}/cover`, {
-    responseType: 'blob',
-  });
+  const { data } = await client.get(`/highlights/${highlightId}/cover`, { responseType: 'blob' });
   return data;
 }
 
 export async function fetchHighlightItemMediaBlob(highlightId, itemId) {
-  const { data } = await client.get(`/highlights/${highlightId}/items/${itemId}/media`, {
-    responseType: 'blob',
-  });
+  const { data } = await client.get(`/highlights/${highlightId}/items/${itemId}/media`, { responseType: 'blob' });
   return data;
 }
