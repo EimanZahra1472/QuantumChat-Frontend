@@ -4836,7 +4836,6 @@ useEffect(() => {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId));
     }
   }
-
   async function sendAttachmentFiles(filesOrFile, { viewOnce = false } = {}) {
     const list = Array.isArray(filesOrFile)
       ? filesOrFile
@@ -4853,20 +4852,37 @@ useEffect(() => {
 
     let ok = 0;
     let failed = 0;
-    for (const file of files) {
-      try {
-        await sendAttachmentFile(file, { quiet: files.length > 1, viewOnce });
-        ok += 1;
-      } catch (err) {
-        failed += 1;
-        showToast(
-          err.response?.data?.error ||
-          err.message ||
-          `Failed to send ${file.name}`,
-          "error",
-        );
+    // A handful of files in flight at once — each does its own encryption
+    // (queued safely on the shared crypto worker) and its own upload, so
+    // this is a real speedup for a multi-photo batch without saturating
+    // the network the way, say, 20-at-once would.
+    const FILE_CONCURRENCY = 3;
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < files.length) {
+        const i = nextIndex;
+        nextIndex += 1;
+        const file = files[i];
+        try {
+          await sendAttachmentFile(file, { quiet: files.length > 1, viewOnce });
+          ok += 1;
+        } catch (err) {
+          failed += 1;
+          showToast(
+            err.response?.data?.error ||
+            err.message ||
+            `Failed to send ${file.name}`,
+            "error",
+          );
+        }
       }
     }
+
+    await Promise.all(
+      Array.from({ length: Math.min(FILE_CONCURRENCY, files.length) }, worker),
+    );
+
     if (files.length > 1 && ok > 0) {
       showToast(
         `${ok} file${ok === 1 ? "" : "s"} sent${failed ? `, ${failed} failed` : ""}`,
@@ -4901,6 +4917,26 @@ useEffect(() => {
       setMediaPreview({ files: mediaFiles, index: 0, viewOnce: false, compress: false });
     }
   }
+  // WhatsApp-style bulk send: commits every picked photo/video at once
+  // instead of tapping Send once per item. Deliberately skips per-item
+  // view-once/compress — those stay on the one-at-a-time flow below, since
+  // asking per-photo would defeat the point of a bulk action.
+  async function handleSendAllMedia() {
+    if (!mediaPreview || mediaPreviewSending || mediaCompressing) return;
+    const files = mediaPreview.files;
+    if (!files?.length) {
+      setMediaPreview(null);
+      return;
+    }
+    setMediaPreviewSending(true);
+    try {
+      await sendAttachmentFiles(files);
+    } finally {
+      setMediaPreviewSending(false);
+      setMediaPreview(null);
+    }
+  }
+
   async function handleMediaPreviewSend() {
     if (!mediaPreview || mediaPreviewSending || mediaCompressing) return;
     const file = mediaPreview.files[mediaPreview.index];
@@ -7695,6 +7731,7 @@ useEffect(() => {
         compressProgress={mediaCompressProgress}
         compressPhase={mediaCompressPhase}
         onSend={handleMediaPreviewSend}
+        onSendAll={handleSendAllMedia}
         onClose={() => !mediaPreviewSending && !mediaCompressing && setMediaPreview(null)}
         sending={mediaPreviewSending || mediaCompressing}
       />
