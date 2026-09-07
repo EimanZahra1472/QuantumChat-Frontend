@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
+import { Play, Pause, Mic } from 'lucide-react';
 import useVoicePlaybackRate from '../hooks/useVoicePlaybackRate.js';
 
 function formatDuration(seconds) {
@@ -7,133 +8,85 @@ function formatDuration(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// Generate an aesthetic, organic audio waveform based on a seed string
+function generateWaveformBars(seedStr, count = 28) {
+  let hash = 0;
+  for (let i = 0; i < (seedStr || '').length; i++) {
+    hash = ((hash << 5) - hash) + seedStr.charCodeAt(i);
+    hash |= 0;
+  }
+  const bars = [];
+  for (let i = 0; i < count; i++) {
+    // Generate organic pseudo-random heights between 20% and 100%
+    const pseudo = Math.abs(Math.sin(hash + i * 1.43) * 0.55 + Math.cos(i * 0.77) * 0.45);
+    const heightPct = Math.round(20 + pseudo * 80);
+    bars.push(Math.max(20, Math.min(100, heightPct)));
+  }
+  return bars;
+}
+
 function VoiceSpeedControl({ rate, setRate, allowedRates }) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
-  const buttonRef = useRef(null);
-  const optionRefs = useRef([]);
-
-  const toggleOpen = (e) => {
-    e.stopPropagation();
-    setIsOpen((prev) => !prev);
-  };
-
-  const handleSelect = (newRate, e) => {
-    e?.stopPropagation();
-    setRate(newRate);
-    setIsOpen(false);
-    buttonRef.current?.focus();
-  };
 
   useEffect(() => {
-    if (!isOpen) return;
-
-    function handlePointerDown(e) {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
-        setIsOpen(false);
-      }
+    if (!isOpen) return undefined;
+    function closeOnOutsidePointer(event) {
+      if (!containerRef.current?.contains(event.target)) setIsOpen(false);
     }
-
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') {
-        setIsOpen(false);
-        buttonRef.current?.focus();
-      }
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setIsOpen(false);
     }
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
     };
   }, [isOpen]);
-
-  useEffect(() => {
-    if (isOpen) {
-      const selectedIndex = allowedRates.indexOf(rate);
-      const targetIndex = selectedIndex >= 0 ? selectedIndex : 0;
-      setTimeout(() => {
-        optionRefs.current[targetIndex]?.focus();
-      }, 0);
-    }
-  }, [isOpen, rate, allowedRates]);
-
-  const handleMenuKeyDown = (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const currentIndex = optionRefs.current.findIndex(
-        (el) => el && el === document.activeElement
-      );
-      let nextIndex = 0;
-      if (e.key === 'ArrowDown') {
-        nextIndex = currentIndex < allowedRates.length - 1 ? currentIndex + 1 : 0;
-      } else {
-        nextIndex = currentIndex > 0 ? currentIndex - 1 : allowedRates.length - 1;
-      }
-      optionRefs.current[nextIndex]?.focus();
-    }
-  };
 
   return (
     <div className="voice-speed-control" ref={containerRef}>
       <button
-        ref={buttonRef}
         type="button"
-        className="voice-speed-btn"
-        onClick={toggleOpen}
+        className="voice-speed-pill"
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen((open) => !open);
+        }}
         aria-label="Playback speed"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >
-        {rate}×
+        {rate}x
       </button>
-
       {isOpen && (
-        <div
-          className="voice-speed-menu"
-          role="listbox"
-          aria-label="Playback speed options"
-          onKeyDown={handleMenuKeyDown}
-        >
-          {allowedRates.map((r, idx) => {
-            const isSelected = r === rate;
-            return (
-              <button
-                key={r}
-                ref={(el) => (optionRefs.current[idx] = el)}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                className={`voice-speed-option ${isSelected ? 'selected' : ''}`}
-                onClick={(e) => handleSelect(r, e)}
-              >
-                {r}×
-              </button>
-            );
-          })}
+        <div className="voice-speed-menu" role="listbox" aria-label="Playback speed options">
+          {allowedRates.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="option"
+              aria-selected={option === rate}
+              className={`voice-speed-option ${option === rate ? 'selected' : ''}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setRate(option);
+                setIsOpen(false);
+              }}
+            >
+              {option}x
+            </button>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-/**
- * Reusable voice/audio message player with playback-speed control.
- *
- * Supports:
- *  - Normal DM & group audio
- *  - View-once DM & group audio
- *  - Playback speed selection (0.5×, 1×, 1.5×, 2×) persisted in localStorage
- *  - WebM infinite-duration workaround
- *  - At-most-once burn callback via onPlayedThrough
- *  - Auto-play (for view-once group audio)
- *  - Cleanup on URL change / unmount
- *
- * @param {{ url: string, onPlayedThrough?: () => void, autoPlay?: boolean }} props
- */
-export default function VoicePlayer({ url, onPlayedThrough, autoPlay = false }) {
+export default function VoicePlayer({ url, onPlayedThrough, isMine = false, autoPlay = false }) {
   const audioRef = useRef(null);
+  const waveTrackRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -143,20 +96,16 @@ export default function VoicePlayer({ url, onPlayedThrough, autoPlay = false }) 
   const autoPlayedRef = useRef(false);
   const { rate, setRate, ALLOWED_RATES } = useVoicePlaybackRate();
 
-  // Pause & reset when the blob URL changes or the component unmounts.
+  const bars = useMemo(() => generateWaveformBars(url, 24), [url]);
+
   useEffect(() => {
     return () => {
       audioRef.current?.pause();
     };
   }, [url]);
 
-  // Apply playbackRate to the HTMLAudioElement whenever it changes.
-  // This works while playing and while paused — it does NOT reset
-  // currentTime, progress, duration, or playback state.
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = rate;
-    }
+    if (audioRef.current) audioRef.current.playbackRate = rate;
   }, [rate]);
 
   function maybeBurn() {
@@ -167,8 +116,6 @@ export default function VoicePlayer({ url, onPlayedThrough, autoPlay = false }) 
 
   // MediaRecorder webm blobs (Chrome/Android) don't carry a real duration
   // header — audio.duration comes back Infinity/NaN on loadedmetadata.
-  // Standard workaround: seek to a huge time, which forces the browser to
-  // resolve the true duration, then seek back to 0.
   function fixInfiniteDuration(audio) {
     if (fixingDurationRef.current) return;
     fixingDurationRef.current = true;
@@ -178,17 +125,16 @@ export default function VoicePlayer({ url, onPlayedThrough, autoPlay = false }) 
       audio.currentTime = 0;
       if (Number.isFinite(audio.duration)) setDuration(audio.duration);
       fixingDurationRef.current = false;
-
-      // If autoPlay was requested, start playback after duration is resolved.
       if (autoPlay && !autoPlayedRef.current) {
         autoPlayedRef.current = true;
-        audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+        audio.play().catch(() => {});
       }
     };
     audio.addEventListener('timeupdate', onTimeUpdate);
   }
 
-  async function togglePlay() {
+  async function togglePlay(e) {
+    e?.stopPropagation?.();
     const audio = audioRef.current;
     if (!audio) return;
     try {
@@ -204,40 +150,52 @@ export default function VoicePlayer({ url, onPlayedThrough, autoPlay = false }) 
     }
   }
 
-  function handleLoadedMetadata(e) {
-    const audio = e.currentTarget;
-    // Sync playbackRate on the fresh audio element.
-    audio.playbackRate = rate;
-    const d = audio.duration;
-    if (Number.isFinite(d) && d > 0) {
-      setDuration(d);
-      // autoPlay for view-once group audio
-      if (autoPlay && !autoPlayedRef.current) {
-        autoPlayedRef.current = true;
-        audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-      }
-    } else {
-      fixInfiniteDuration(audio);
+  function handleSeek(e) {
+    e?.stopPropagation?.();
+    const audio = audioRef.current;
+    const track = waveTrackRef.current;
+    if (!audio || !track) return;
+    const rect = track.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+    const targetTime = ratio * (audio.duration || duration || 0);
+    if (Number.isFinite(targetTime)) {
+      audio.currentTime = targetTime;
+      setCurrentTime(targetTime);
+      setProgress(ratio);
     }
   }
 
-  // WhatsApp-style: show total duration at rest, count up elapsed while playing.
+  // WhatsApp-style: show duration when paused at 0, count up elapsed when active
   const displaySeconds = playing || currentTime > 0 ? currentTime : duration;
 
   return (
-    <div className="voice-player">
+    <div className={`voice-player-modern ${isMine ? 'is-mine' : 'is-theirs'} ${playing ? 'is-playing' : ''}`}>
       <audio
         ref={audioRef}
         src={url}
         preload="metadata"
-        onLoadedMetadata={handleLoadedMetadata}
+        onLoadedMetadata={(e) => {
+          const audio = e.currentTarget;
+          audio.playbackRate = rate;
+          const d = audio.duration;
+          if (Number.isFinite(d) && d > 0) {
+            setDuration(d);
+            if (autoPlay && !autoPlayedRef.current) {
+              autoPlayedRef.current = true;
+              audio.play().catch(() => {});
+            }
+          } else {
+            fixInfiniteDuration(audio);
+          }
+        }}
         onDurationChange={(e) => {
           const d = e.currentTarget.duration;
           if (Number.isFinite(d) && d > 0) setDuration(d);
         }}
         onTimeUpdate={(e) => {
           const a = e.currentTarget;
-          if (fixingDurationRef.current) return; // ignore the seek-probe tick
+          if (fixingDurationRef.current) return;
           setCurrentTime(a.currentTime);
           setProgress(a.duration && Number.isFinite(a.duration) ? a.currentTime / a.duration : 0);
         }}
@@ -250,23 +208,59 @@ export default function VoicePlayer({ url, onPlayedThrough, autoPlay = false }) 
         onPause={() => setPlaying(false)}
         onPlay={() => setPlaying(true)}
       />
-      <button type="button" className="voice-play-btn" onClick={togglePlay} aria-label={playing ? 'Pause voice note' : 'Play voice note'}>
-        {playing ? (
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="5" width="4" height="14" rx="1" />
-            <rect x="14" y="5" width="4" height="14" rx="1" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="6,4 20,12 6,20" />
-          </svg>
-        )}
-      </button>
-      <div className="voice-wave">
-        <div className="voice-wave-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
+
+      {/* Row 1: Play button + Waveform sharing the same vertical center */}
+      <div className="voice-main-row">
+        <button
+          type="button"
+          className="voice-play-btn"
+          onClick={togglePlay}
+          aria-label={playing ? 'Pause voice message' : 'Play voice message'}
+        >
+          {playing ? (
+            <Pause size={13} fill="currentColor" stroke="none" className="voice-btn-icon" />
+          ) : (
+            <Play size={13} fill="currentColor" stroke="none" className="voice-btn-icon voice-btn-icon--play" />
+          )}
+        </button>
+
+        {/* Interactive Waveform Seeking */}
+        <div
+          ref={waveTrackRef}
+          className="voice-wave-bars"
+          onClick={handleSeek}
+          role="slider"
+          aria-label="Seek voice message"
+          aria-valuenow={Math.round(progress * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          tabIndex={0}
+        >
+          {bars.map((h, i) => {
+            const barProgress = i / (bars.length - 1);
+            const isFilled = barProgress <= progress;
+            return (
+              <span
+                key={i}
+                className={`voice-wave-bar ${isFilled ? 'filled' : ''}`}
+                style={{ height: `${h}%` }}
+              />
+            );
+          })}
+        </div>
       </div>
-      <span className="voice-duration">{formatDuration(displaySeconds)}</span>
-      <VoiceSpeedControl rate={rate} setRate={setRate} allowedRates={ALLOWED_RATES} />
+
+      {/* Row 2: Bottom Metadata indented flush beneath the waveform */}
+      <div className="voice-meta-row">
+        <div className="voice-meta-left">
+          <span className="voice-time-label">
+            <Mic size={11} className="voice-mic-icon" />
+            <span>{formatDuration(displaySeconds)}</span>
+          </span>
+
+          <VoiceSpeedControl rate={rate} setRate={setRate} allowedRates={ALLOWED_RATES} />
+        </div>
+      </div>
     </div>
   );
 }

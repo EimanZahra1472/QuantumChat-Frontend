@@ -23,7 +23,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getDisplayName } from "../utils/getDisplayName.js";
 import { streamQuantumAI } from "../api/aiClient.js";
-import { fetchChatTheme, fetchThemeCatalog, fetchWallpaperImageUrl } from '../api/chatThemes.js';
+import { fetchChatTheme, fetchThemeCatalog, fetchWallpaperImageUrl, fetchGroupChatTheme, fetchGroupWallpaperImageUrl } from '../api/chatThemes.js';
 import client, { muteChat, unmuteChat } from "../api/client.js";
 import { postPresenceHeartbeat } from "../api/presence.js";
 import { connectSocket, getSocket } from "../api/socket.js";
@@ -79,6 +79,8 @@ import {
   secretboxSeal,
   unsealMessage,
 } from "../crypto/keys.js";
+import { sealBytesAsync, secretboxSealAsync } from "../crypto/encryptFileAsync.js";
+import { compressVideo } from "../crypto/videoCompressor.js";
 import {
   findSecretKeyForPublicKey,
   getCurrentKeySet,
@@ -129,6 +131,7 @@ import {
   getPinnedIds,
   getStarredEntries,
   getStarredIds,
+  restoreStarredEntries,
   togglePinnedMessage,
   toggleStarredMessage,
 } from "../utils/messageExtras.js";
@@ -151,11 +154,15 @@ import {
 } from "../utils/readState.js";
 import { shouldEnforceScreenshotProtection } from "../utils/screenshotProtection.js";
 import { playReceiveSound, playSendSound, startIncomingRingSound, unlockAudio } from "../utils/sounds.js";
+
 const DEFAULT_CHAT_THEME = { presetId: 'default', bubbleColorId: 'default', wallpaperId: 'none' };
 
 const MAX_VOICE_SECONDS = 60;
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
-const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — matches backend MAX_ATTACHMENT_SIZE
+// Ciphertext above this size uploads in sequential chunks instead of one
+// request body — must match backend CHUNK_SIZE in middleware/upload.js.
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
 
 function isRecentlyActive(iso) {
   if (!iso) return false;
@@ -231,6 +238,20 @@ function isSameDay(d1, d2) {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
+}
+
+/** Whether a message belongs to a Clear-chat scope bucket. */
+function messageMatchesClearScope(message, scope) {
+  if (scope === "all") return true;
+  const category = message?.mediaCategory;
+  const hasAttachment = Boolean(
+    message?.attachment &&
+      (typeof message.attachment === "object"
+        ? message.attachment.id || message.attachment._id
+        : message.attachment),
+  );
+  if (scope === "text") return !category && !hasAttachment;
+  return category === scope;
 }
 
 export default function Chat() {
@@ -327,6 +348,10 @@ export default function Chat() {
   const [disappearSeconds, setDisappearSeconds] = useState(0);
   const [mediaPreview, setMediaPreview] = useState(null);
   const [mediaPreviewSending, setMediaPreviewSending] = useState(false);
+   const [mediaCompressing, setMediaCompressing] = useState(false);
+  const [mediaCompressProgress, setMediaCompressProgress] = useState(0);
+  const [mediaCompressPhase, setMediaCompressPhase] = useState('encoding');
+  const [videoPlayer, setVideoPlayer] = useState(null);
   const [allowForward, setAllowForward] = useState(true);
   const [forwardUntilSeconds, setForwardUntilSeconds] = useState(0);
   const [gallery, setGallery] = useState(null);
@@ -412,17 +437,18 @@ export default function Chat() {
       .catch(() => { }); // Non-critical — the picker just won't open without it; chat still works.
   }, [hasLocalKeyring]);
 
-  useEffect(() => {
+ useEffect(() => {
     setThemeModalOpen(false);
 
-    if (!selected || selected.type !== "dm") {
+    if (!selected || (selected.type !== "dm" && selected.type !== "group")) {
       setChatTheme(DEFAULT_CHAT_THEME);
       return;
     }
 
     let cancelled = false;
+    const fetcher = selected.type === "group" ? fetchGroupChatTheme : fetchChatTheme;
 
-    fetchChatTheme(selected.id).then((theme) => {
+    fetcher(selected.id).then((theme) => {
       if (!cancelled) {
         setChatTheme(theme);
       }
@@ -436,10 +462,10 @@ export default function Chat() {
   // The custom wallpaper endpoint returns raw bytes (auth-gated, owner-only)
   // rather than a public URL, so it has to be fetched as a blob and turned
   // into an object URL, same as attachment previews elsewhere in this app.
-  useEffect(() => {
+useEffect(() => {
     if (
       !selected ||
-      selected.type !== "dm" ||
+      (selected.type !== "dm" && selected.type !== "group") ||
       chatTheme.wallpaperId !== "custom"
     ) {
       setCustomWallpaperUrl(null);
@@ -448,8 +474,9 @@ export default function Chat() {
 
     let cancelled = false;
     let urlToRevoke = null;
+    const fetchUrl = selected.type === "group" ? fetchGroupWallpaperImageUrl : fetchWallpaperImageUrl;
 
-    fetchWallpaperImageUrl(selected.id).then((url) => {
+    fetchUrl(selected.id).then((url) => {
       if (cancelled) {
         URL.revokeObjectURL(url);
         return;
@@ -509,7 +536,8 @@ export default function Chat() {
   const recordStartedAtRef = useRef(0);
   const notifiedCallIdRef = useRef(null);
   const dragCountRef = useRef(0);
-  const imageSrcMapRef = useRef(new Map());
+   const imageSrcMapRef = useRef(new Map());
+  const videoSrcMapRef = useRef(new Map());
   const aiAbortRef = useRef(null);
   const usersRef = useRef([]);
   const groupsRef = useRef([]);
@@ -1565,6 +1593,13 @@ export default function Chat() {
         }
       }
 
+      // Always acknowledge delivery as soon as the client receives the message
+      // over the socket, regardless of whether this conversation is currently open.
+      if (String(raw.from) !== String(user.id)) {
+        const socket = getSocket();
+        socket?.emit("message:delivered", { messageId: raw.id || raw._id });
+      }
+
       // Only mutate the open thread for the active conversation.
       if (!isCurrent) return;
 
@@ -1627,8 +1662,17 @@ export default function Chat() {
 
       if (String(raw.from) !== String(user.id)) {
         const socket = getSocket();
-        socket?.emit("message:delivered", { messageId: raw.id || raw._id });
-        if (selectedRef.current?.type === "group") {
+
+        const rawGroupId =
+          raw.group && typeof raw.group === "object"
+            ? raw.group.id || raw.group._id
+            : raw.group;
+
+        if (
+          selectedRef.current?.type === "group" &&
+          rawGroupId &&
+          String(selectedRef.current.id) === String(rawGroupId)
+        ) {
           socket?.emit("message:read", {
             messageId: raw.id || raw._id,
             groupId: selectedRef.current.id,
@@ -1636,7 +1680,10 @@ export default function Chat() {
           client
             .post(`/groups/${selectedRef.current.id}/messages/read`)
             .catch(() => { });
-        } else if (selectedRef.current?.type === "dm") {
+        } else if (
+          selectedRef.current?.type === "dm" &&
+          String(selectedRef.current.id) === String(raw.from)
+        ) {
           socket?.emit("message:read", { messageId: raw.id || raw._id });
           client
             .post(`/messages/${selectedRef.current.id}/read`)
@@ -2115,10 +2162,9 @@ export default function Chat() {
     }
 
     function handleChatCleared(payload = {}) {
-      // Multi-device sync: another of this user's sessions cleared a chat. If
-      // we're viewing that same conversation, empty it here too. The backend
-      // already filters cleared messages out of fetch/sync, so nothing stale
-      // reappears on a later refresh.
+      // Multi-device sync: another of this user's sessions cleared a chat.
+      // Scoped clears (photos only, etc.) must NOT wipe the whole thread —
+      // only drop matching messages. Full "all" clears empty the view.
       const current = selectedRef.current;
       if (!current) return;
       const matchesGroup =
@@ -2129,9 +2175,56 @@ export default function Chat() {
         payload.peerId &&
         current.type === "dm" &&
         String(current.id) === String(payload.peerId);
-      if (matchesGroup || matchesDm) {
+      if (!matchesGroup && !matchesDm) return;
+
+      const scopes = Array.isArray(payload.scopes) && payload.scopes.length
+        ? payload.scopes.map(String)
+        : ["all"];
+      if (scopes.includes("all")) {
         setMessages([]);
+        return;
       }
+
+      const clearedAtMs = payload.clearedAt
+        ? new Date(payload.clearedAt).getTime()
+        : Date.now();
+
+      setMessages((prev) =>
+        prev.filter((m) => {
+          const createdMs = new Date(m.createdAt || 0).getTime();
+          if (createdMs > clearedAtMs) return true;
+          return !scopes.some((scope) => messageMatchesClearScope(m, scope));
+        }),
+      );
+    }
+
+    function handleChatClearUndone(payload = {}) {
+      // Another of this user's sessions undid a clear — re-fetch if we're
+      // looking at that conversation so hidden messages come back.
+      const current = selectedRef.current;
+      if (!current) return;
+      const matchesGroup =
+        payload.groupId &&
+        current.type === "group" &&
+        String(current.id) === String(payload.groupId);
+      const matchesDm =
+        payload.peerId &&
+        current.type === "dm" &&
+        String(current.id) === String(payload.peerId);
+      if (!matchesGroup && !matchesDm) return;
+
+      const endpoint =
+        current.type === "group"
+          ? `/groups/${current.id}/messages`
+          : `/messages/${current.id}`;
+      setLoadingMessages(true);
+      client
+        .get(endpoint, { params: { limit: 80, markRead: 0 } })
+        .then((res) => {
+          setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+        })
+        .catch(() => {})
+        .finally(() => setLoadingMessages(false));
     }
 
     function handleUserStatus(payload = {}) {
@@ -2180,6 +2273,7 @@ export default function Chat() {
     socket.on("friend:request:accepted", handleFriendRequestAccepted);
     socket.on("friend:removed", handleFriendRemoved);
     socket.on("chat:cleared", handleChatCleared);
+    socket.on("chat:clear-undone", handleChatClearUndone);
     socket.on("user:status", handleUserStatus);
 
     // Auth may connect the socket before Chat mounts, so the initial
@@ -2215,6 +2309,7 @@ export default function Chat() {
       socket.off("friend:request:accepted", handleFriendRequestAccepted);
       socket.off("friend:removed", handleFriendRemoved);
       socket.off("chat:cleared", handleChatCleared);
+      socket.off("chat:clear-undone", handleChatClearUndone);
       socket.off("user:status", handleUserStatus);
   socket.off("connect", requestPresence);
   stopTyping({ emit: false });
@@ -3356,9 +3451,9 @@ export default function Chat() {
                 fontSize: '0.8rem',
                 fontWeight: '600',
                 borderRadius: '4px',
-                border: 'none',
-                background: '#ffffff',
-                color: '#111827',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
                 cursor: 'pointer',
                 marginTop: '2px',
               }}
@@ -3684,8 +3779,33 @@ export default function Chat() {
     if (!selected) return;
     const type = selected.type;
     const id = selected.id;
+    const conversationKey = selected.key;
     const clearingStarred = scopes.includes("starred");
-    const serverScopes = scopes.filter((s) => s !== "starred");
+    const CONTENT_SCOPES = ["photo", "video", "voice", "document", "text"];
+    let serverScopes = scopes.filter((s) => s !== "starred");
+    // Selecting every content type is a full clear — use the single 'all'
+    // watermark so we don't leave five overlapping scoped entries.
+    if (CONTENT_SCOPES.every((k) => serverScopes.includes(k))) {
+      serverScopes = ["all"];
+    }
+
+    // Snapshot for Undo (toast stays up ~8s).
+    const previousClearedEntries = (user.clearedConversations || [])
+      .filter((c) => c && c.conversationKey === conversationKey)
+      .map((c) => ({
+        conversationKey: c.conversationKey,
+        scope: c.scope || "all",
+        clearedAt: c.clearedAt,
+      }));
+    const previousMessages =
+      selectedRef.current &&
+      selectedRef.current.type === type &&
+      String(selectedRef.current.id) === String(id)
+        ? messages
+        : null;
+    const previousStarredEntries = clearingStarred
+      ? getStarredEntries(user.id)
+      : null;
 
     try {
       setClearChatBusy(true);
@@ -3708,24 +3828,95 @@ export default function Chat() {
 
       const current = selectedRef.current;
       if (current && current.type === type && String(current.id) === String(id)) {
-        // Re-fetch rather than blanking outright — a scoped clear (e.g. just
-        // photos) should still leave the remaining messages visible.
-        setLoadingMessages(true);
-        const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
-        try {
-          const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
-          setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
-        } finally {
-          setLoadingMessages(false);
+        if (serverScopes.includes("all")) {
+          setMessages([]);
+        } else if (serverScopes.length) {
+          // Re-fetch rather than blanking outright — a scoped clear (e.g. just
+          // photos) should still leave the remaining messages visible.
+          setLoadingMessages(true);
+          const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
+          try {
+            const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
+            setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+          } finally {
+            setLoadingMessages(false);
+          }
         }
       }
 
-      showToast("Chat cleared", "success");
+      const toastLabel = serverScopes.includes("all")
+        ? "Chat cleared"
+        : serverScopes.length
+          ? "Selected messages cleared"
+          : clearingStarred
+            ? "Starred messages cleared"
+            : "Chat cleared";
+
+      let undoUsed = false;
+      showToast(toastLabel, "success", 8000, {
+        actionLabel: "Undo",
+        onAction: () => {
+          if (undoUsed) return;
+          undoUsed = true;
+          void undoClearChat({
+            type,
+            id,
+            previousClearedEntries,
+            previousMessages,
+            previousStarredEntries,
+            hadServerClear: serverScopes.length > 0,
+          });
+        },
+      });
       setClearChatOpen(false);
     } catch (err) {
       showToast(err.response?.data?.error || "Failed to clear chat", "error");
     } finally {
       setClearChatBusy(false);
+    }
+  }
+
+  async function undoClearChat({
+    type,
+    id,
+    previousClearedEntries,
+    previousMessages,
+    previousStarredEntries,
+    hadServerClear,
+  }) {
+    try {
+      if (hadServerClear) {
+        const payload =
+          type === "group"
+            ? { groupId: id, restoreEntries: previousClearedEntries }
+            : { peerId: id, restoreEntries: previousClearedEntries };
+        const { data } = await client.post("/users/me/clear-chat/undo", payload);
+        if (data?.data) updateSessionUser(data.data);
+      }
+
+      if (previousStarredEntries) {
+        setStarredIds(restoreStarredEntries(user.id, previousStarredEntries));
+      }
+
+      const current = selectedRef.current;
+      if (current && current.type === type && String(current.id) === String(id)) {
+        if (Array.isArray(previousMessages)) {
+          setMessages(previousMessages);
+        } else {
+          setLoadingMessages(true);
+          const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
+          try {
+            const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
+            setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+          } finally {
+            setLoadingMessages(false);
+          }
+        }
+      }
+
+      showToast("Clear undone", "success", 2500);
+    } catch (err) {
+      showToast(err.response?.data?.error || "Could not undo clear", "error");
     }
   }
   async function handleUnblockUser(peerId) {
@@ -4349,6 +4540,54 @@ export default function Chat() {
     return undefined;
   }
 
+  // Large-file path: same durable result as putCiphertext, but sent as
+  // sequential small requests instead of one big body — Vercel's
+  // serverless functions reject an oversized single request body outright,
+  // which is what actually broke video uploads.
+    async function putCiphertextChunked(
+    cipherBytes,
+    { pendingUploadId, slot, signal, onProgress },
+  ) {
+    const total = cipherBytes.byteLength;
+    const totalChunks = Math.max(1, Math.ceil(total / CHUNK_SIZE));
+    const CONCURRENCY = 4; // parallel round-trips per slot — chunks carry their own index, order doesn't matter server-side
+    const loadedByChunk = new Array(totalChunks).fill(0);
+    const report = () => {
+      const sent = loadedByChunk.reduce((a, b) => a + b, 0);
+      onProgress?.({ loaded: sent, total });
+    };
+
+    async function uploadChunk(chunkIndex) {
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, total);
+      const chunkBlob = new Blob([cipherBytes.subarray(start, end)], {
+        type: "application/octet-stream",
+      });
+
+      await client.put(
+        `/attachments/pending/${pendingUploadId}/chunk?slot=${slot}&chunkIndex=${chunkIndex}&totalChunks=${totalChunks}`,
+        chunkBlob,
+        { signal, headers: { "Content-Type": "application/octet-stream" } },
+      );
+
+      loadedByChunk[chunkIndex] = end - start;
+      report();
+    }
+
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < totalChunks) {
+        const chunkIndex = nextIndex;
+        nextIndex += 1;
+        await uploadChunk(chunkIndex);
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, totalChunks) }, worker),
+    );
+    return undefined;
+  }
   async function sendAttachmentFile(file, { plainBytes, quiet, viewOnce = false } = {}) {
     if (
       !file ||
@@ -4376,9 +4615,10 @@ export default function Chat() {
       if (selected.type === "group") {
         const fileBytes =
           plainBytes || new Uint8Array(await file.arrayBuffer());
-        const sealed = secretboxSeal(fileBytes);
+        const sealed = await secretboxSealAsync(fileBytes);
         const mimeType = file.type || "application/octet-stream";
         const cipherBlob = new Blob([sealed.cipherBytes], { type: mimeType });
+        const useChunked = sealed.cipherBytes.byteLength > CHUNK_SIZE;
 
         const initRes = await client.post(
           "/attachments/init",
@@ -4393,25 +4633,30 @@ export default function Chat() {
         );
         const { pendingUploadId } = initRes.data.data;
 
-        const recipientDirectUploadId = await putCiphertext(
-          cipherBlob,
-          file.name,
-          {
-            pendingUploadId,
-            slot: "recipient",
-            signal: controller.signal,
-            onProgress: (event) => {
-              if (!event.total) return;
-              const progress = Math.min(
-                100,
-                Math.round((event.loaded / event.total) * 100),
-              );
-              setUploads((prev) =>
-                prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)),
-              );
-            },
-          },
-        );
+        const onRecipientProgress = (event) => {
+          if (!event.total) return;
+          const progress = Math.min(
+            100,
+            Math.round((event.loaded / event.total) * 100),
+          );
+          setUploads((prev) =>
+            prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)),
+          );
+        };
+
+        const recipientDirectUploadId = useChunked
+          ? await putCiphertextChunked(sealed.cipherBytes, {
+              pendingUploadId,
+              slot: "recipient",
+              signal: controller.signal,
+              onProgress: onRecipientProgress,
+            })
+          : await putCiphertext(cipherBlob, file.name, {
+              pendingUploadId,
+              slot: "recipient",
+              signal: controller.signal,
+              onProgress: onRecipientProgress,
+            });
 
         const finalizeRes = await client.post(
           "/attachments/finalize",
@@ -4449,9 +4694,15 @@ export default function Chat() {
       }
       const recipientPublicKey = pickRandom(recipientKeys);
       const fileBytes = plainBytes || new Uint8Array(await file.arrayBuffer());
-      const forRecipientFile = sealBytes(fileBytes, recipientPublicKey);
-      const forSenderFile = sealBytes(fileBytes, myKey.publicKey);
+      // Safe to run concurrently: each call only transfers its OWN output
+      // buffer back (see cryptoWorker.js) — fileBytes itself is never
+      // transferred, so there's nothing shared to race on.
+      const [forRecipientFile, forSenderFile] = await Promise.all([
+        sealBytesAsync(fileBytes, recipientPublicKey),
+        sealBytesAsync(fileBytes, myKey.publicKey),
+      ]);
       const mimeType = file.type || "application/octet-stream";
+      const useChunked = forRecipientFile.cipherBytes.byteLength > CHUNK_SIZE;
       const recipientBlob = new Blob([forRecipientFile.cipherBytes], {
         type: mimeType,
       });
@@ -4490,30 +4741,55 @@ export default function Chat() {
           prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)),
         );
       };
-      const recipientDirectUploadId = await putCiphertext(
-        recipientBlob,
-        file.name,
-        {
-          pendingUploadId,
-          slot: "recipient",
-          signal: controller.signal,
-          onProgress: (event) => {
-            recipientLoaded = event.loaded || 0;
-            reportProgress();
-          },
-        },
-      );
-      const senderDirectUploadId = sender
-        ? await putCiphertext(senderBlob, file.name, {
-          pendingUploadId,
-          slot: "sender",
-          signal: controller.signal,
-          onProgress: (event) => {
-            senderLoaded = event.loaded || 0;
-            reportProgress();
-          },
-        })
-        : undefined;
+      const recipientUploadPromise = useChunked
+        ? putCiphertextChunked(forRecipientFile.cipherBytes, {
+            pendingUploadId,
+            slot: "recipient",
+            signal: controller.signal,
+            onProgress: (event) => {
+              recipientLoaded = event.loaded || 0;
+              reportProgress();
+            },
+          })
+        : putCiphertext(recipientBlob, file.name, {
+            pendingUploadId,
+            slot: "recipient",
+            signal: controller.signal,
+            onProgress: (event) => {
+              recipientLoaded = event.loaded || 0;
+              reportProgress();
+            },
+          });
+
+      const senderUploadPromise = sender
+        ? useChunked
+          ? putCiphertextChunked(forSenderFile.cipherBytes, {
+              pendingUploadId,
+              slot: "sender",
+              signal: controller.signal,
+              onProgress: (event) => {
+                senderLoaded = event.loaded || 0;
+                reportProgress();
+              },
+            })
+          : putCiphertext(senderBlob, file.name, {
+              pendingUploadId,
+              slot: "sender",
+              signal: controller.signal,
+              onProgress: (event) => {
+                senderLoaded = event.loaded || 0;
+                reportProgress();
+              },
+            })
+        : Promise.resolve(undefined);
+
+      // Recipient and sender ciphertext are independent objects server-side
+      // — concurrent upload roughly halves wall-clock time versus two full
+      // round trips back to back.
+      const [recipientDirectUploadId, senderDirectUploadId] = await Promise.all([
+        recipientUploadPromise,
+        senderUploadPromise,
+      ]);
 
       const finalizeRes = await client.post(
         "/attachments/finalize",
@@ -4560,7 +4836,6 @@ export default function Chat() {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId));
     }
   }
-
   async function sendAttachmentFiles(filesOrFile, { viewOnce = false } = {}) {
     const list = Array.isArray(filesOrFile)
       ? filesOrFile
@@ -4577,20 +4852,37 @@ export default function Chat() {
 
     let ok = 0;
     let failed = 0;
-    for (const file of files) {
-      try {
-        await sendAttachmentFile(file, { quiet: files.length > 1, viewOnce });
-        ok += 1;
-      } catch (err) {
-        failed += 1;
-        showToast(
-          err.response?.data?.error ||
-          err.message ||
-          `Failed to send ${file.name}`,
-          "error",
-        );
+    // A handful of files in flight at once — each does its own encryption
+    // (queued safely on the shared crypto worker) and its own upload, so
+    // this is a real speedup for a multi-photo batch without saturating
+    // the network the way, say, 20-at-once would.
+    const FILE_CONCURRENCY = 3;
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < files.length) {
+        const i = nextIndex;
+        nextIndex += 1;
+        const file = files[i];
+        try {
+          await sendAttachmentFile(file, { quiet: files.length > 1, viewOnce });
+          ok += 1;
+        } catch (err) {
+          failed += 1;
+          showToast(
+            err.response?.data?.error ||
+            err.message ||
+            `Failed to send ${file.name}`,
+            "error",
+          );
+        }
       }
     }
+
+    await Promise.all(
+      Array.from({ length: Math.min(FILE_CONCURRENCY, files.length) }, worker),
+    );
+
     if (files.length > 1 && ok > 0) {
       showToast(
         `${ok} file${ok === 1 ? "" : "s"} sent${failed ? `, ${failed} failed` : ""}`,
@@ -4622,21 +4914,63 @@ export default function Chat() {
     }
 
     if (mediaFiles.length) {
-      setMediaPreview({ files: mediaFiles, index: 0, viewOnce: false });
+      setMediaPreview({ files: mediaFiles, index: 0, viewOnce: false, compress: false });
+    }
+  }
+  // WhatsApp-style bulk send: commits every picked photo/video at once
+  // instead of tapping Send once per item. Deliberately skips per-item
+  // view-once/compress — those stay on the one-at-a-time flow below, since
+  // asking per-photo would defeat the point of a bulk action.
+  async function handleSendAllMedia() {
+    if (!mediaPreview || mediaPreviewSending || mediaCompressing) return;
+    const files = mediaPreview.files;
+    if (!files?.length) {
+      setMediaPreview(null);
+      return;
+    }
+    setMediaPreviewSending(true);
+    try {
+      await sendAttachmentFiles(files);
+    } finally {
+      setMediaPreviewSending(false);
+      setMediaPreview(null);
     }
   }
 
   async function handleMediaPreviewSend() {
-    if (!mediaPreview || mediaPreviewSending) return;
+    if (!mediaPreview || mediaPreviewSending || mediaCompressing) return;
     const file = mediaPreview.files[mediaPreview.index];
     if (!file) {
       setMediaPreview(null);
       return;
     }
 
+    let fileToSend = file;
+    if (mediaPreview.compress && String(file.type || "").startsWith("video/")) {
+      setMediaCompressing(true);
+      setMediaCompressProgress(0);
+      try {
+        fileToSend = await compressVideo(
+          file,
+          (progress) => setMediaCompressProgress(progress),
+          (phase) => setMediaCompressPhase(phase),
+        );
+      } catch (err) {
+        showToast(
+          err.message || "Compression failed — sending original video",
+          "error",
+        );
+        fileToSend = file;
+      } finally {
+        setMediaCompressing(false);
+        setMediaCompressProgress(0);
+        setMediaCompressPhase('encoding');
+      }
+    }
+
     setMediaPreviewSending(true);
     try {
-      await sendAttachmentFile(file, {
+      await sendAttachmentFile(fileToSend, {
         viewOnce: mediaPreview.viewOnce,
         quiet: mediaPreview.files.length > 1,
       });
@@ -4646,6 +4980,7 @@ export default function Chat() {
           files: mediaPreview.files,
           index: nextIndex,
           viewOnce: false,
+          compress: false,
         });
       } else {
         setMediaPreview(null);
@@ -4758,6 +5093,17 @@ export default function Chat() {
       items.findIndex((it) => it.id === String(id)),
     );
     setGallery({ items, index: index < 0 ? 0 : index });
+  }
+
+  function handleVideoReady(id, src, filename) {
+    if (!id || !src) return;
+    videoSrcMapRef.current.set(String(id), { src, alt: filename || "Video" });
+  }
+
+  function handleVideoPreview(id) {
+    const entry = videoSrcMapRef.current.get(String(id));
+    if (!entry) return;
+    setVideoPlayer({ src: entry.src, filename: entry.alt });
   }
 
   function clearRecordingResources({ keepChunks = false } = {}) {
@@ -5670,7 +6016,11 @@ export default function Chat() {
         }}
         storiesRailRef={storiesRailRef}
         users={users}
-        onStoriesError={setError}
+        onStoriesError={(msg) => {
+          const text = String(msg || 'Something went wrong with your status');
+          setError(text);
+          showToast(text, 'error');
+        }}
         notifSettings={notifSettings}
         search={search}
         onSearchChange={setSearch}
@@ -6173,10 +6523,10 @@ export default function Chat() {
                     onClearChat={handleClearChat}
                     onSearch={() => setSearchOpen(true)}
                     onWallpaper={
-                      selected.type === "dm" && !selected.isSelfChat
-                        ? () => setThemeModalOpen(true)
-                        : undefined
-                    }
+  selected.type === "group" || (selected.type === "dm" && !selected.isSelfChat)
+    ? () => setThemeModalOpen(true)
+    : undefined
+}
                     onStarred={() => {
                       setStarredScope("chat");
                       setShowStarredMessages(true);
@@ -6388,6 +6738,8 @@ export default function Chat() {
                               onJumpToReply={handleJumpToReply}
                               onImagePreview={handleImagePreview}
                               onImageReady={handleImageReady}
+                              onVideoPreview={handleVideoPreview}
+                              onVideoReady={handleVideoReady}
                               onBurnViewOnce={handleBurnViewOnce}
                               onShowInfo={handleShowMessageInfo}
                               onShowEditHistory={handleShowEditHistory}
@@ -6623,7 +6975,7 @@ export default function Chat() {
                                   style={{
                                     fontSize: 11,
                                     fontWeight: 600,
-                                    color: "#b45309",
+                                    color: "var(--warning-text, #fbbf24)",
                                   }}
                                 >
                                   {reason === "mentions_off"
@@ -6744,15 +7096,16 @@ export default function Chat() {
           </>
         )}
       </main>
-      {themeModalOpen && selected && (
-        <ChatThemeModal
-          peerId={selected.id}
-          theme={chatTheme}
-          catalog={themeCatalog}
-          onApplied={(updated) => setChatTheme(updated)}
-          onClose={() => setThemeModalOpen(false)}
-        />
-      )}
+      {themeModalOpen && selected && (selected.type === "dm" || selected.type === "group") && (
+  <ChatThemeModal
+    peerId={selected.type === "dm" ? selected.id : undefined}
+    groupId={selected.type === "group" ? selected.id : undefined}
+    theme={chatTheme}
+    catalog={themeCatalog}
+    onApplied={(updated) => setChatTheme(updated)}
+    onClose={() => setThemeModalOpen(false)}
+  />
+)}
 
       {aiPanelOpen && (
         <AIAssistantPanel
@@ -6901,16 +7254,19 @@ export default function Chat() {
       )}
 
       {showGroupSettings && activeGroup && (
-        <GroupSettingsModal
-          group={activeGroup}
-          currentUserId={user.id}
-          users={users}
-          onClose={() => setShowGroupSettings(false)}
-          onUpdated={mergeUpdatedGroup}
-          onLeftOrDeleted={handleLeftOrDeletedGroup}
-        />
-      )}
-
+  <GroupSettingsModal
+    group={activeGroup}
+    currentUserId={user.id}
+    users={users}
+    onClose={() => setShowGroupSettings(false)}
+    onUpdated={mergeUpdatedGroup}
+    onLeftOrDeleted={handleLeftOrDeletedGroup}
+    onOpenChatTheme={() => {
+      setShowGroupSettings(false);
+      setThemeModalOpen(true);
+    }}
+  />
+)}
       {profileUserId && (
         <UserProfileModal
           userId={profileUserId}
@@ -7006,9 +7362,17 @@ export default function Chat() {
         <ChatMediaModal
           messages={visibleMessages}
           imageSrcMap={imageSrcMapRef.current}
+          videoSrcMap={videoSrcMapRef.current}
+          resolveSecretKey={resolveMySecretKey}
+          onImageReady={handleImageReady}
+          onVideoReady={handleVideoReady}
           onImageClick={(id) => {
             setShowChatMedia(false);
             handleImagePreview(id);
+          }}
+          onVideoClick={(id) => {
+            setShowChatMedia(false);
+            handleVideoPreview(id);
           }}
           onClose={() => setShowChatMedia(false)}
         />
@@ -7320,6 +7684,32 @@ export default function Chat() {
         onClose={() => setGallery(null)}
       />
 
+      {videoPlayer && (
+        <div
+          className="lightbox-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setVideoPlayer(null)}
+        >
+          <button
+            type="button"
+            className="lightbox-close"
+            onClick={() => setVideoPlayer(null)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+          <video
+            src={videoPlayer.src}
+            controls
+            autoPlay
+            playsInline
+            className="lightbox-image"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
       <MediaSendPreview
         open={Boolean(mediaPreview?.files?.length)}
         file={mediaPreview?.files?.[mediaPreview.index]}
@@ -7331,9 +7721,19 @@ export default function Chat() {
             prev ? { ...prev, viewOnce: !prev.viewOnce } : prev,
           )
         }
+        compress={Boolean(mediaPreview?.compress)}
+        onToggleCompress={() =>
+          setMediaPreview((prev) =>
+            prev ? { ...prev, compress: !prev.compress } : prev,
+          )
+        }
+        compressing={mediaCompressing}
+        compressProgress={mediaCompressProgress}
+        compressPhase={mediaCompressPhase}
         onSend={handleMediaPreviewSend}
-        onClose={() => !mediaPreviewSending && setMediaPreview(null)}
-        sending={mediaPreviewSending}
+        onSendAll={handleSendAllMedia}
+        onClose={() => !mediaPreviewSending && !mediaCompressing && setMediaPreview(null)}
+        sending={mediaPreviewSending || mediaCompressing}
       />
 
       <ComposerPlusSheet

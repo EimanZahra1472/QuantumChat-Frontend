@@ -9,9 +9,9 @@ export default {
     extend: {
       colors: {
         brand: {
-          cyan: '#38bdf8',
-          bg: '#07131f',
-          surface: '#0d1b2a',
+          cyan: '#06b6d4',
+          bg: '#0f1115',
+          surface: '#1a1d23',
           text: '#f1f5f9',
           textMuted: '#94a3b8',
         },

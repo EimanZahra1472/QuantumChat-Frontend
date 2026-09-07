@@ -1,4 +1,4 @@
-import { Eye, Mic, Paperclip, Send, Smile, Square, X } from 'lucide-react';
+import { BookmarkPlus, Camera, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
@@ -15,8 +15,16 @@ import {
 import { COMPOSER_EMOJIS, searchEmojis } from '../utils/emojis.js';
 import { playNotificationSound, shouldNotify, showNotificationPopup } from '../utils/notificationDispatch.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
+import HighlightPickerSheet from './HighlightPickerSheet.jsx';
+import StoryHistoryPanel from './StoryHistoryPanel.jsx';
+import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
+import TextStoryComposer from './TextStoryComposer.jsx';
 import UserAvatar from './UserAvatar.jsx';
+import { compressVideo } from '../crypto/videoCompressor.js';
 const MAX_STORY_SECONDS = 60;
+const MAX_STORY_UPLOAD_BYTES = 95 * 1024 * 1024; // stay under server 100MB limit
+const COMPRESS_IF_LARGER_THAN = 4 * 1024 * 1024; // compress status videos over ~4MB
+const FORCE_COMPRESS_IF_LARGER_THAN = 20 * 1024 * 1024; // don't skip re-encode above ~20MB
 const TTL_PRESETS = [
   { label: '1 hour', ms: 60 * 60 * 1000 },
   { label: '6 hours', ms: 6 * 60 * 60 * 1000 },
@@ -88,14 +96,29 @@ function probeMediaDuration(file) {
     const isVideo = file.type.startsWith('video/');
     const el = document.createElement(isVideo ? 'video' : 'audio');
     el.preload = 'metadata';
-    el.onloadedmetadata = () => {
-      const durationMs = Math.round((el.duration || 0) * 1000);
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       URL.revokeObjectURL(url);
-      resolve(durationMs);
+      el.removeAttribute('src');
+      el.load?.();
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      finish(reject, new Error('Could not read this video — try another clip'));
+    }, 12_000);
+    el.onloadedmetadata = () => {
+      const seconds = el.duration;
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        finish(reject, new Error('Could not read this video duration — try another clip'));
+        return;
+      }
+      finish(resolve, Math.round(seconds * 1000));
     };
     el.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Could not read media duration'));
+      finish(reject, new Error('Could not read this video — try another clip'));
     };
     el.src = url;
   });
@@ -171,6 +194,15 @@ function viewerCanSeeStory(story, currentUserId) {
   return (story.envelopes || []).some((e) => envelopeUserId(e) === uid);
 }
 
+/** Session cache of decrypted story object URLs — reopening a status is instant. */
+const storyMediaCache = new Map();
+/** Parallel blob cache so highlights can upload without re-fetching. */
+const storyMediaBlobCache = new Map();
+
+function cacheKeyForStory(story) {
+  return `${story.id}:${story.sealed ? '1' : '0'}:${story.contentIv || ''}`;
+}
+
 function formatElapsed(dateStr) {
   if (!dateStr) return '';
   const diffMs = Date.now() - new Date(dateStr).getTime();
@@ -202,10 +234,19 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [viewer, setViewer] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPhase, setUploadPhase] = useState(''); // '', 'compress', 'encrypt', 'upload'
+  const [composerError, setComposerError] = useState('');
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [unavailable, setUnavailable] = useState(false);
-  const inputRef = useRef(null);
+  const [createSheetOpen, setCreateSheetOpen] = useState(false);
+  const [textComposerOpen, setTextComposerOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+ const [historyTab, setHistoryTab] = useState('drafts');
+  const [draftCount, setDraftCount] = useState(0);
+  const [fabHost, setFabHost] = useState(null);
+  const mediaInputRef = useRef(null);
+  const audioInputRef = useRef(null);
   const grouped = useMemo(() => {
     const map = new Map();
     for (const story of stories) {
@@ -243,8 +284,18 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     }
   }
 
+  async function loadDraftsCount() {
+    try {
+      const { data } = await client.get('/stories/mine/drafts');
+      setDraftCount((data.data || []).length);
+    } catch {
+      setDraftCount(0);
+    }
+  }
+
   useEffect(() => {
     loadStories().catch(() => { });
+    loadDraftsCount().catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -287,19 +338,63 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   };
 }, [currentUser?.id, currentUser?.friends, notifSettings]);
 
+  useEffect(() => {
+    setFabHost(document.querySelector('.qc-conversation-pane'));
+  }, []);
+
+  const ownGroup = useMemo(
+    () => grouped.find((g) => String(g.user?.id) === String(currentUser?.id)) || null,
+    [grouped, currentUser?.id]
+  );
+
+  useEffect(() => {
+    if (!createSheetOpen) return undefined;
+    function onKey(e) {
+      if (e.key === 'Escape') setCreateSheetOpen(false);
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [createSheetOpen]);
+
   function handleFileSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+    setCreateSheetOpen(false);
+    setTextComposerOpen(false);
+    setComposerError('');
     setPendingFile(file);
     setPendingPreviewUrl(URL.createObjectURL(file));
   }
 
+  function openCreateSheet() {
+    if (uploading) return;
+    setCreateSheetOpen(true);
+  }
 
-  async function uploadStory(file, ttlMs, allowReplies = true) {
+  function openOwnStoriesOrCreate() {
+    if (uploading) return;
+    if (ownGroup?.items?.length) {
+      setUnavailable(false);
+      setViewer({ group: ownGroup, index: 0 });
+      return;
+    }
+    openCreateSheet();
+  }
+
+
+  function reportStoryError(message) {
+    const text = String(message || 'Failed to upload story');
+    setComposerError(text);
+    onError?.(text);
+  }
+
+  async function uploadStory(file, ttlMs, allowReplies = true, options = {}) {
     try {
       setUploading(true);
+      setUploadPhase('');
+      setComposerError('');
 
       // Make sure our local keyring is actually in sync with the server before
       // sealing anything to it — this is the fix for stories being undecryptable.
@@ -309,29 +404,74 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       const ownerUser = getStoredUser() || currentUser;
       const sync = getKeyringSyncStatus(ownerUser.id, ownerUser.publicKeys || []);
       if (sync.status !== 'synced') {
-        onError?.(
+        reportStoryError(
           'Encryption keys are out of sync with the server. Use Settings → Regenerate & resync keys before posting stories.'
         );
         return false;
       }
 
+      let fileToUpload = file;
       let durationMs = 0;
-      if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
-        durationMs = await probeMediaDuration(file);
+      const looksLikeAv =
+        file.type.startsWith('video/') ||
+        file.type.startsWith('audio/') ||
+        /\.(mp4|mov|webm|m4v|mkv|mp3|m4a|wav|ogg)$/i.test(file.name || '');
+      if (looksLikeAv) {
+        try {
+          durationMs = await probeMediaDuration(file);
+        } catch (err) {
+          reportStoryError(err?.message || 'Could not read this media file');
+          return false;
+        }
         if (durationMs > MAX_STORY_SECONDS * 1000) {
-          onError?.(`Stories must be ${MAX_STORY_SECONDS} seconds or shorter`);
+          reportStoryError(
+            `This video is too long (${Math.ceil(durationMs / 1000)}s). Stories must be ${MAX_STORY_SECONDS} seconds or shorter.`
+          );
           return false;
         }
       }
 
+      // Large phone videos exceed the upload limit — compress before sealing.
+      const isVideo =
+        file.type.startsWith('video/') ||
+        /\.(mp4|mov|webm|m4v|mkv)$/i.test(file.name || '');
+      if (isVideo && file.size > COMPRESS_IF_LARGER_THAN) {
+        setUploadPhase('compress');
+        try {
+          fileToUpload = await compressVideo(
+            file,
+            undefined,
+            undefined,
+            { force: file.size > FORCE_COMPRESS_IF_LARGER_THAN }
+          );
+        } catch (err) {
+          if (file.size > MAX_STORY_UPLOAD_BYTES) {
+            reportStoryError(
+              err?.message ||
+                'Could not compress this video. Try a shorter clip under 60 seconds.'
+            );
+            return false;
+          }
+          // Compression failed but original still fits — continue with original.
+          fileToUpload = file;
+        }
+      }
+
+      if (fileToUpload.size > MAX_STORY_UPLOAD_BYTES) {
+        reportStoryError(
+          'This video is still too large after compression. Try a shorter clip (under 60 seconds).'
+        );
+        return false;
+      }
+
+      const status = options.status || 'published';
       const form = new FormData();
       const canSeal = typeof crypto !== 'undefined' && crypto.subtle;
 
       if (canSeal) {
-        const sealed = await aesGcmEncryptBlob(file);
+        setUploadPhase('encrypt');
+        const sealed = await aesGcmEncryptBlob(fileToUpload);
 
-        // Seal the author envelope to keys this device actually holds (same
-        // pattern as chat forSender), not a possibly stale session publicKeys list.
         const ownerKeySet = getCurrentKeySet(ownerUser.id, KEY_SET_SIZE);
         const ownerPublicKeys = ownerKeySet.map((k) => k.publicKey).filter(Boolean);
         if (ownerPublicKeys.length !== KEY_SET_SIZE) {
@@ -356,7 +496,6 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         for (const u of users) {
           if (!u?.id || !u.publicKeys?.length) continue;
           if (String(u.id) === String(ownerUser.id)) continue;
-           // --- Story privacy filter
           if (storyPrivacy === 'nobody') continue;
           if (storyPrivacy === 'friends' && !friendSet.has(String(u.id))) continue;
           if (storyPrivacy === 'selected' && !selectedSet.has(String(u.id))) continue;
@@ -385,30 +524,41 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         form.append(
           'file',
           new Blob([sealed.cipherBytes], { type: 'application/octet-stream' }),
-          file.name || 'story.bin'
+          fileToUpload.name || 'story.bin'
         );
         form.append('sealed', 'true');
-        form.append('mimetype', file.type || 'application/octet-stream');
-        if (file.type.startsWith('image/')) form.append('mediaType', 'image');
-        else if (file.type.startsWith('video/')) form.append('mediaType', 'video');
-        else if (file.type.startsWith('audio/')) form.append('mediaType', 'audio');
+        const mime =
+          fileToUpload.type ||
+          (isVideo ? 'video/mp4' : file.type.startsWith('audio/') ? 'audio/webm' : 'application/octet-stream');
+        form.append('mimetype', mime);
+        if (mime.startsWith('image/')) form.append('mediaType', 'image');
+        else if (mime.startsWith('video/') || isVideo) form.append('mediaType', 'video');
+        else if (mime.startsWith('audio/')) form.append('mediaType', 'audio');
         form.append('contentIv', sealed.ivB64);
         form.append('envelopes', JSON.stringify(envelopes));
       } else {
-        form.append('file', file);
+        form.append('file', fileToUpload);
       }
       form.append('durationMs', String(durationMs));
       form.append('ttlMs', String(ttlMs));
       form.append('allowReplies', String(allowReplies));
+      form.append('status', status);
+      if (status === 'scheduled' && options.publishAt) {
+        form.append('publishAt', options.publishAt);
+      }
 
-      await client.post('/stories', form);
-      await loadStories();
+      setUploadPhase('upload');
+      await client.post('/stories', form, { timeout: 5 * 60 * 1000 });
+      if (status === 'published') await loadStories();
+      await loadDraftsCount();
       return true;
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to upload story');
+      const msg = err.response?.data?.error || err.message || 'Failed to upload story';
+      reportStoryError(msg);
       return false;
     } finally {
       setUploading(false);
+      setUploadPhase('');
     }
   }
 
@@ -416,15 +566,46 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
     setPendingFile(null);
     setPendingPreviewUrl(null);
+    setTextComposerOpen(false);
+    setComposerError('');
   }
 
-  async function confirmPostStory(ttlMs, allowReplies) {
+  async function confirmPostStory(ttlMs, allowReplies, options = {}) {
     const file = pendingFile;
     if (!file || uploading) return;
-    const ok = await uploadStory(file, ttlMs, allowReplies);
+    const ok = await uploadStory(file, ttlMs, allowReplies, options);
     if (ok) closeComposer();
   }
 
+  async function confirmPostTextStory(file, ttlMs, allowReplies, options = {}) {
+    if (!file || uploading) return;
+    const ok = await uploadStory(file, ttlMs, allowReplies, options);
+    if (ok) closeComposer();
+  }
+
+   async function openDraftPreview(draft) {
+    setHistoryOpen(false);
+    try {
+      setUnavailable(false);
+      setViewer({
+        group: {
+          user: draft.user || {
+            id: currentUser?.id,
+            username: currentUser?.username,
+            hasAvatar: currentUser?.hasAvatar,
+          },
+          items: [draft],
+        },
+        index: 0,
+      });
+    } catch {
+      onError?.('Could not open draft preview');
+    }
+  }
+  function openActiveStoryPreview(items, index) {
+    setUnavailable(false);
+    setViewer({ group: { user: currentUser, items }, index });
+  }
   useImperativeHandle(ref, () => ({
     async openStoryById(storyId) {
       try {
@@ -443,26 +624,53 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       <p className="stories-privacy-note">
         Sealed stories use X5 envelopes so allowed contacts can decrypt; the server only stores ciphertext.
       </p>
-      <button
-        type="button"
-        className={`story-ring add${uploading ? ' uploading' : ''}`}
-        onClick={() => inputRef.current?.click()}
-        disabled={uploading}
-        aria-label="Add story"
-      >
-        <UserAvatar
-          userId={currentUser?.id}
-          name={currentUser?.username}
-          hasAvatar={currentUser?.hasAvatar}
-          size="story"
-        />
-        <span className="story-add-badge">{uploading ? '…' : '+'}</span>
-        <span className="story-ring-label">{uploading ? 'Uploading…' : 'Your story'}</span>
-      </button>
+
+      <div className="story-add-wrap">
+        <button
+          type="button"
+          className={`story-ring add${uploading ? ' uploading' : ''}${ownGroup?.items?.length ? ' has-own' : ''}`}
+          onClick={openOwnStoriesOrCreate}
+          disabled={uploading}
+          aria-label={ownGroup?.items?.length ? 'View your status' : 'Add status'}
+        >
+          <UserAvatar
+            userId={currentUser?.id}
+            name={currentUser?.username}
+            hasAvatar={currentUser?.hasAvatar}
+            size="story"
+          />
+          <span className="story-ring-label">
+            {uploading
+              ? uploadPhase === 'compress'
+                ? 'Compressing…'
+                : uploadPhase === 'encrypt'
+                  ? 'Encrypting…'
+                  : 'Uploading…'
+              : 'My status'}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="story-add-badge"
+          disabled={uploading}
+          aria-label="Add status"
+          onClick={openCreateSheet}
+        >
+          {uploading ? '…' : '+'}
+        </button>
+      </div>
+
       <input
-        ref={inputRef}
+        ref={mediaInputRef}
         type="file"
-        accept="image/*,video/*,audio/*"
+        accept="image/*,video/*"
+        hidden
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={audioInputRef}
+        type="file"
+        accept="audio/*"
         hidden
         onChange={handleFileSelected}
       />
@@ -477,7 +685,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
 
       {!storiesLoading &&
         grouped
-          .filter((g) => String(g.user?.id) !== String(currentUser?.id) || g.items.length > 0)
+          .filter((g) => String(g.user?.id) !== String(currentUser?.id))
           .map((g) => {
             const hasSealed = g.items.some((s) => s.sealed);
             return (
@@ -534,8 +742,163 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           onCancel={closeComposer}
           onConfirm={confirmPostStory}
           uploading={uploading}
+          uploadPhase={uploadPhase}
+          error={composerError}
+          onError={reportStoryError}
         />
       )}
+      {textComposerOpen && !pendingFile && (
+        <TextStoryComposer
+          onCancel={() => setTextComposerOpen(false)}
+          onConfirm={confirmPostTextStory}
+          uploading={uploading}
+          onError={onError}
+        />
+      )}
+
+       <StoryHistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        currentUserId={currentUser?.id}
+        initialTab={historyTab}
+        onError={onError}
+        onChanged={() => {
+          loadStories();
+          loadDraftsCount();
+        }}
+        onPreviewDraft={openDraftPreview}
+        onPreviewStory={openActiveStoryPreview}
+      />
+
+      {createSheetOpen &&
+        createPortal(
+          <div
+            className="status-create-overlay"
+            onClick={() => setCreateSheetOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="status-create-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Add status"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="status-create-handle" aria-hidden />
+              <h2 className="status-create-title">Add status</h2>
+              <p className="status-create-subtitle">Share a photo, video, voice note, or text</p>
+              <div className="status-create-options">
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    mediaInputRef.current?.click();
+                  }}
+                >
+                  <span className="status-create-icon media">
+                    <ImagePlus size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Photo &amp; video</strong>
+                    <small>Upload from your gallery</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    audioInputRef.current?.click();
+                  }}
+                >
+                  <span className="status-create-icon audio">
+                    <Mic size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Voice note</strong>
+                    <small>Share an audio status</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                    setTextComposerOpen(true);
+                  }}
+                >
+                  <span className="status-create-icon text">
+                    <Type size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Text status</strong>
+                    <small>Type with colors and fonts</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="status-create-option"
+                  onClick={() => {
+                    setCreateSheetOpen(false);
+                     setHistoryTab('drafts');
+                    setHistoryOpen(true);
+                  }}
+                >
+                  <span className="status-create-icon drafts">
+                    <FilePen size={22} aria-hidden />
+                  </span>
+                  <span className="status-create-copy">
+                    <strong>Story history</strong>
+                    <small>
+                      {draftCount > 0
+                        ? `${draftCount} waiting — preview, edit, or publish`
+                          : 'Active, archived, and drafts'}
+                    </small>
+                  </span>
+                </button>
+              </div>
+              <button
+                type="button"
+                className="status-create-cancel"
+                onClick={() => setCreateSheetOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {!uploading &&
+        !pendingFile &&
+        !textComposerOpen &&
+        !createSheetOpen &&
+        !viewer &&
+        fabHost &&
+        createPortal(
+          <div className="status-fabs" aria-label="Create status">
+            <button
+              type="button"
+              className="status-fab text"
+              title="Text status"
+              aria-label="Text status"
+              onClick={() => setTextComposerOpen(true)}
+            >
+              <Pencil size={20} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="status-fab camera"
+              title="Add status"
+              aria-label="Add photo, video, or other status"
+              onClick={openCreateSheet}
+            >
+              <Camera size={24} aria-hidden />
+            </button>
+          </div>,
+          fabHost
+        )}
     </div>
   );
 });
@@ -563,8 +926,9 @@ function StoryViewersSheet({ viewerCount, viewers, onClose }) {
                 <span className="story-viewers-sheet-name">{v.username}</span>
                 <span className="story-viewers-sheet-time">
                   {new Date(v.viewedAt).toLocaleTimeString([], {
-                    hour: '2-digit',
+                    hour: 'numeric',
                     minute: '2-digit',
+                    hour12: true,
                   })}
                 </span>
               </div>
@@ -583,6 +947,8 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   const [index, setIndex] = useState(startIndex || 0);
   const [mediaUrl, setMediaUrl] = useState(null);
   const [blockedReason, setBlockedReason] = useState('');
+  const [loadPhase, setLoadPhase] = useState(''); // '', 'download', 'decrypt'
+  const [downloadPct, setDownloadPct] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const replyInputRef = useRef(null);
@@ -606,6 +972,8 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   const [gifQuery, setGifQuery] = useState('');
   const [gifResults, setGifResults] = useState([]);
   const [gifLoading, setGifLoading] = useState(false);
+  const [saveHighlightOpen, setSaveHighlightOpen] = useState(false);
+  const [mediaBlob, setMediaBlob] = useState(null);
 
   const story = group.items[index];
   const isOwn = String(group.user?.id) === String(currentUserId);
@@ -613,10 +981,14 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   useEffect(() => {
     const abortController = new AbortController();
     let objectUrl;
+    let usedCache = false;
 
-    // Reset state for the new story immediately
     setMediaUrl(null);
+    setMediaBlob(null);
     setBlockedReason('');
+    setLoadPhase('');
+    setDownloadPct(null);
+    setSaveHighlightOpen(false);
 
     if (!isOwn) {
       client.post(`/stories/${story.id}/view`).catch(() => {
@@ -625,7 +997,17 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
     }
 
     (async () => {
-       if (story.sealed) {
+      const cacheKey = cacheKeyForStory(story);
+      const cachedUrl = storyMediaCache.get(cacheKey);
+      const cachedBlob = storyMediaBlobCache.get(cacheKey);
+      if (cachedUrl && cachedBlob) {
+        usedCache = true;
+        setMediaUrl(cachedUrl);
+        setMediaBlob(cachedBlob);
+        return;
+      }
+
+      if (story.sealed) {
         const unlocked = unlockStoryKey(story, currentUserId);
         const ivB64 = unlocked?.payload?.ivB64 || story.contentIv;
 
@@ -634,42 +1016,65 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           return;
         }
 
+        setLoadPhase('download');
         const res = await client.get(`/stories/${story.id}/media`, {
           responseType: 'arraybuffer',
-          signal: abortController.signal, // Kills the request on unmount
+          signal: abortController.signal,
+          timeout: 90_000,
+          onDownloadProgress: (evt) => {
+            if (!evt.total) return;
+            setDownloadPct(Math.min(99, Math.round((evt.loaded / evt.total) * 100)));
+          },
         });
 
-        // Bail out before heavy decryption if the user already skipped
         if (abortController.signal.aborted) return;
+
+        setLoadPhase('decrypt');
+        setDownloadPct(100);
+        await new Promise((r) => requestAnimationFrame(() => r()));
 
         const cipherBytes = new Uint8Array(res.data);
         const plain = await aesGcmDecryptBytes(cipherBytes, unlocked.payload.keyB64, ivB64);
 
         if (abortController.signal.aborted) return;
 
-        objectUrl = URL.createObjectURL(
-          new Blob([plain], { type: story.mimetype || 'application/octet-stream' })
-        );
+        const mime = story.mimetype || 'application/octet-stream';
+        const blob = new Blob([plain], { type: mime });
+        objectUrl = URL.createObjectURL(blob);
+        storyMediaCache.set(cacheKey, objectUrl);
+        storyMediaBlobCache.set(cacheKey, blob);
         setMediaUrl(objectUrl);
+        setMediaBlob(blob);
+        setLoadPhase('');
         return;
       }
 
-      // Non-sealed path
+      setLoadPhase('download');
       const res = await client.get(`/stories/${story.id}/media`, {
         responseType: 'blob',
         signal: abortController.signal,
+        timeout: 90_000,
+        onDownloadProgress: (evt) => {
+          if (!evt.total) return;
+          setDownloadPct(Math.min(99, Math.round((evt.loaded / evt.total) * 100)));
+        },
       });
 
       if (abortController.signal.aborted) return;
 
-      objectUrl = URL.createObjectURL(res.data);
+      const blob = res.data;
+      objectUrl = URL.createObjectURL(blob);
+      storyMediaCache.set(cacheKey, objectUrl);
+      storyMediaBlobCache.set(cacheKey, blob);
       setMediaUrl(objectUrl);
-
+      setMediaBlob(blob);
+      setLoadPhase('');
     })().catch((err) => {
-      // Axios >=0.22 throws 'CanceledError'. Native fetch throws 'AbortError'.
       if (err.name === 'CanceledError' || err.name === 'AbortError') return;
 
       setMediaUrl(null);
+      setMediaBlob(null);
+      setLoadPhase('');
 
       if (story.sealed) {
         const status = err?.response?.status;
@@ -677,21 +1082,27 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           setBlockedReason('Sealed story — no envelope for your keys');
         } else if (status === 404) {
           setBlockedReason('Story media is missing on the server');
+        } else if (err.code === 'ECONNABORTED') {
+          setBlockedReason('Status download timed out — try again');
         } else {
           setBlockedReason('Could not decrypt this sealed story');
         }
       } else {
-        // Fixes the silent failure for public stories
-        setBlockedReason('Failed to load story media');
+        setBlockedReason(
+          err.code === 'ECONNABORTED'
+            ? 'Status download timed out — try again'
+            : 'Failed to load story media'
+        );
       }
     });
 
     return () => {
-      abortController.abort(); // Triggers the cancellation across the board
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      abortController.abort();
+      if (objectUrl && !usedCache) {
+        const key = cacheKeyForStory(story);
+        if (storyMediaCache.get(key) !== objectUrl) URL.revokeObjectURL(objectUrl);
+      }
     };
-
-    // Only depend on primitives to prevent infinite re-render loops
   }, [story.id, story.sealed, story.contentIv, story.mimetype, currentUserId]);
 
   useEffect(() => {
@@ -1202,7 +1613,13 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           {!blockedReason && !mediaUrl && (
             <div className="story-media-loading" aria-live="polite">
               <div className="skeleton skeleton-line story-media-loading-bar" />
-              <p className="empty-hint">Decrypting…</p>
+              <p className="empty-hint">
+                {loadPhase === 'decrypt'
+                  ? 'Decrypting…'
+                  : downloadPct != null
+                    ? `Downloading… ${downloadPct}%`
+                    : 'Loading status…'}
+              </p>
             </div>
           )}
           {mediaUrl && story.mediaType === 'image' && <img src={mediaUrl} alt="" />}
@@ -1222,6 +1639,19 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
                   <Eye size={16} strokeWidth={2} />
                   <span>{viewerCount}</span>
                 </button>
+                <button
+                  type="button"
+                  className="story-highlight-btn"
+                  disabled={!mediaUrl}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setSaveHighlightOpen(true);
+                  }}
+                >
+                  <BookmarkPlus size={16} strokeWidth={2} />
+                  <span>Highlight</span>
+                </button>
                 <button type="button" className="story-delete-btn" onClick={handleDelete}>
                   Delete
                 </button>
@@ -1234,6 +1664,16 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
             viewerCount={viewerCount}
             viewers={viewers}
             onClose={() => setViewersOpen(false)}
+          />
+        )}
+        {isOwn && saveHighlightOpen && (
+          <HighlightPickerSheet
+            open={saveHighlightOpen}
+            onClose={() => setSaveHighlightOpen(false)}
+            onError={onError}
+            mediaUrl={mediaUrl}
+            mediaBlob={mediaBlob}
+            story={story}
           />
         )}
        {!isOwn && story.allowReplies !== false && (
@@ -1485,17 +1925,26 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   );
 }
 
-function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading }) {
-  const [preset, setPreset] = useState(DEFAULT_TTL_MS);
-  const [customMode, setCustomMode] = useState(false);
-  const [customValue, setCustomValue] = useState(24);
-  const [customUnit, setCustomUnit] = useState('hours');
-  const [allowReplies, setAllowReplies] = useState(true);
+function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, uploadPhase, error, onError }) {
+  const opts = useStoryPublishOptions(DEFAULT_TTL_MS);
+  const [showPreview, setShowPreview] = useState(false);
+  const [localError, setLocalError] = useState('');
   const imagePreviewRef = useRef(null);
   const videoPreviewRef = useRef(null);
   const audioPreviewRef = useRef(null);
 
-  const unitMultiplier = { minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+  const busyPostLabel =
+    uploadPhase === 'compress'
+      ? 'Compressing video…'
+      : uploadPhase === 'upload'
+        ? 'Uploading…'
+        : 'Encrypting & posting…';
+
+  const displayError = error || localError;
+
+  useEffect(() => {
+    setLocalError('');
+  }, [file]);
 
   useEffect(() => {
     let safePreviewUrl = '';
@@ -1522,111 +1971,65 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading }) {
     };
   }, [previewUrl]);
 
-  function computeTtlMs() {
-    if (customMode) {
-      const raw = Number(customValue) || 0;
-      const ms = raw * (unitMultiplier[customUnit] || unitMultiplier.hours);
-      return Math.min(Math.max(ms, MIN_TTL_MS), MAX_TTL_MS);
-    }
-    return preset;
+  function reportError(message) {
+    const text = String(message || 'Could not post story');
+    setLocalError(text);
+    onError?.(text);
   }
 
-  return (
-    <div className="story-composer-overlay" onClick={onCancel}>
+  async function submit(status) {
+    if (uploading) return;
+    setLocalError('');
+    try {
+      const options = opts.buildOptions(status);
+      await onConfirm?.(opts.computeTtlMs(), opts.allowReplies, options);
+    } catch (err) {
+      reportError(err?.message || 'Could not save story');
+    }
+  }
+
+  const isVideoFile =
+    file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v|mkv)$/i.test(file.name || '');
+
+  return createPortal(
+    <div className="story-composer-overlay" onClick={uploading ? undefined : onCancel}>
       <div className="story-composer" onClick={(e) => e.stopPropagation()}>
         <div className="story-composer-top">
           <span>New story</span>
-          <button type="button" onClick={onCancel} aria-label="Cancel">
+          <button type="button" onClick={onCancel} aria-label="Cancel" disabled={uploading}>
             ×
           </button>
         </div>
 
         <div className="story-composer-preview">
           {file.type.startsWith('image/') && <img ref={imagePreviewRef} alt="" />}
-          {file.type.startsWith('video/') && <video ref={videoPreviewRef} controls />}
+          {isVideoFile && <video ref={videoPreviewRef} controls playsInline />}
           {file.type.startsWith('audio/') && <audio ref={audioPreviewRef} controls />}
         </div>
 
-        <div className="story-composer-ttl">
-          <p className="story-composer-ttl-label">Visible for</p>
-          <div className="story-composer-ttl-presets" role="group" aria-label="Story duration">
-            {TTL_PRESETS.map((p) => (
-              <button
-                key={p.ms}
-                type="button"
-                className={`story-ttl-preset ${!customMode && preset === p.ms ? 'active' : ''}`}
-                disabled={uploading}
-                onClick={() => {
-                  setCustomMode(false);
-                  setPreset(p.ms);
-                }}
-              >
-                {p.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={`story-ttl-preset ${customMode ? 'active' : ''}`}
-              disabled={uploading}
-              onClick={() => setCustomMode(true)}
-            >
-              Custom…
-            </button>
-          </div>
+        {displayError ? <p className="story-composer-error" role="alert">{displayError}</p> : null}
 
-          {customMode && (
-            <div className="story-composer-custom-row">
-              <input
-                type="number"
-                min="1"
-                value={customValue}
-                disabled={uploading}
-                onChange={(e) => setCustomValue(e.target.value)}
-                aria-label="Custom duration value"
-              />
-              <select
-                value={customUnit}
-                disabled={uploading}
-                onChange={(e) => setCustomUnit(e.target.value)}
-                aria-label="Custom duration unit"
-              >
-                <option value="minutes">Minutes</option>
-                <option value="hours">Hours</option>
-                <option value="days">Days</option>
-              </select>
-            </div>
-          )}
-          <p className="story-composer-ttl-hint">
-            Min 15 minutes · max 7 days. Media is sealed before upload.
-          </p>
-        </div>
+        <StoryPublishControls
+          opts={opts}
+          busy={uploading}
+          canSubmit={!uploading}
+          busyLabel={busyPostLabel}
+          onPreview={() => setShowPreview(true)}
+          onDraft={() => submit('draft')}
+          onSchedule={() => submit('scheduled')}
+          onPost={() => submit('published')}
+        />
 
-        <label className="story-composer-ttl" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={allowReplies}
-            disabled={uploading}
-            onChange={(e) => setAllowReplies(e.target.checked)}
-          />
-          <span className="story-composer-ttl-label" style={{ margin: 0 }}>
-            Allow replies to this story
-          </span>
-        </label>
-
-        <div className="story-composer-actions">
+        <div className="story-composer-actions" style={{ paddingTop: 0 }}>
           <button type="button" className="story-composer-cancel" onClick={onCancel} disabled={uploading}>
             Cancel
           </button>
-          <button
-            type="button"
-            className="story-composer-post"
-            disabled={uploading}
-            onClick={() => onConfirm(computeTtlMs(), allowReplies)}
-          >
-            {uploading ? 'Encrypting & posting…' : 'Post story'}
-          </button>
         </div>
       </div>
-    </div>
+      {showPreview && (
+        <StoryLocalPreview file={file} previewUrl={previewUrl} onClose={() => setShowPreview(false)} />
+      )}
+    </div>,
+    document.body
   );
 }

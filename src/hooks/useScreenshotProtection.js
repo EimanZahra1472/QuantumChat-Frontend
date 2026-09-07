@@ -51,6 +51,17 @@ export function useScreenshotProtection(enabled, { onAttempt, scope = 'chat' } =
       const code = e.code || '';
       // Windows / Linux PrintScreen
       if (key === 'PrintScreen' || code === 'PrintScreen') return true;
+      // Windows Snipping Tool (Win+Shift+S) — the most common modern
+      // Windows screenshot method, previously undetected entirely. The OS
+      // shell intercepts this before the page in some configurations, so
+      // this still won't catch every case — but it does fire as a normal
+      // keydown in enough real-world setups to be worth listening for.
+      if (e.shiftKey && !e.ctrlKey && !e.altKey) {
+        const k = key.toLowerCase();
+        if ((k === 's' || code === 'KeyS') && (e.metaKey || e.getModifierState?.('Meta') || e.getModifierState?.('OS'))) {
+          return true;
+        }
+      }
       // macOS: Cmd+Shift+3/4/5 (full / selection / recording)
       // Do not treat Ctrl+Shift+S as a screenshot — browsers use it for Save.
       if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {

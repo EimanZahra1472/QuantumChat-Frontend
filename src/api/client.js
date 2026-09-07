@@ -35,6 +35,10 @@ export async function getNotificationSettings() {
   const { data } = await client.get('/users/me/notification-settings');
   return data;
 }
+export async function lookupContactByPhone(phone) {
+  const { data } = await client.get('/users/lookup', { params: { phone } });
+  return data;
+}
 
 export async function updateNotificationSettings(payload) {
   const { data } = await client.put('/users/me/notification-settings', payload);
