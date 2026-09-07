@@ -4898,7 +4898,7 @@ input:focus-visible,
   align-items: center;
   gap: 10px;
   min-width: 180px;
-  max-width: 260px;
+  max-width: 300px;
   padding: 6px 4px 8px;
 }
 
@@ -4950,6 +4950,103 @@ input:focus-visible,
   opacity: 0.8;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+.voice-speed-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.voice-speed-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-gradient);
+  color: var(--bubble-mine-fg, #ffffff);
+  border: 1px solid #000000;
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  min-width: 38px;
+  min-height: 26px;
+  text-align: center;
+  line-height: 1.2;
+  user-select: none;
+  touch-action: manipulation;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.voice-speed-btn:hover {
+  filter: brightness(1.08);
+}
+
+.voice-speed-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.message-bubble.theirs .voice-speed-btn {
+  background: var(--bubble-theirs-bg, var(--bg-elevated));
+  color: var(--bubble-theirs-fg, var(--text-primary));
+}
+
+.voice-speed-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #111827);
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  min-width: 58px;
+  z-index: 99;
+}
+
+.message-bubble.theirs .voice-speed-menu {
+  background: var(--bg-surface-elevated, #1e293b);
+  color: var(--text-primary, #f8fafc);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.voice-speed-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: center;
+  width: 100%;
+  user-select: none;
+  transition: background 0.10s ease;
+}
+
+.voice-speed-option:hover,
+.voice-speed-option:focus-visible {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.08));
+  outline: none;
+}
+
+.voice-speed-option.selected {
+  background: var(--accent, #3b82f6);
+  color: #ffffff;
+  font-weight: 700;
 }
 
 .attachment-chip-voice .file-icon {
@@ -5494,6 +5591,16 @@ input:focus-visible,
   margin: 6px 0 0;
   top: 0;
   clear: both;
+}
+
+.message-bubble:has(.voice-player) .message-time {
+  position: static;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.message-bubble:has(.voice-player) .message-time-spacer {
+  display: none;
 }
 
 .message-text {
@@ -6361,68 +6468,7 @@ input:focus-visible,
   background: var(--accent);
 }
 
-.voice-player {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 180px;
-  max-width: 260px;
-  padding: 6px 4px 8px;
-}
 
-.voice-play-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent);
-  color: var(--text-inverse);
-  flex-shrink: 0;
-  border: none;
-  cursor: pointer;
-}
-
-.voice-play-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.message-bubble.theirs .voice-play-btn {
-  background: var(--accent-solid, var(--accent));
-}
-
-.voice-wave {
-  flex: 1;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--wave-bg);
-  overflow: hidden;
-  min-width: 64px;
-}
-
-.message-bubble.theirs .voice-wave {
-  background: var(--wave-bg-theirs);
-}
-
-.voice-wave-fill {
-  height: 100%;
-  background: currentColor;
-  opacity: 0.85;
-  border-radius: inherit;
-}
-
-.voice-duration {
-  font-size: 11px;
-  opacity: 0.8;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-.attachment-chip-voice .file-icon {
-  color: var(--accent);
-}
 
 .composer input {
   flex: 1;

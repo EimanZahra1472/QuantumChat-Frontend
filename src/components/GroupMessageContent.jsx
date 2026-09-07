@@ -4,6 +4,7 @@ import { secretboxOpen } from '../crypto/keys.js';
 import { isEmojiOnlyText, splitEmojis } from '../utils/emojis.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
+import VoicePlayer from './VoicePlayer.jsx';
 
 function MentionText({ text }) {
   const parts = [];
@@ -87,7 +88,7 @@ function GroupFileCard({ payload }) {
     return <video className="attachment-video" src={url} controls playsInline />;
   }
   if (mime.startsWith('audio/')) {
-    return <audio src={url} controls className="attachment-audio" />;
+    return <VoicePlayer url={url} />;
   }
   if (mime === 'application/pdf') {
     return (
@@ -186,15 +187,7 @@ function ViewOnceGroupFileCard({ payload, isMine, mediaKind, onBurnViewOnce }) {
   if (!url) return null;
 
   if (kind === 'audio') {
-    return (
-      <audio
-        src={url}
-        controls
-        autoPlay
-        className="attachment-audio"
-        onEnded={burn}
-      />
-    );
+    return <VoicePlayer url={url} autoPlay onPlayedThrough={burn} />;
   }
 
   if (kind === 'video') {
