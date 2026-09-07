@@ -117,6 +117,7 @@ export function StoryPublishControls({
   onSchedule,
   onPost,
   postLabel = 'Post story',
+  busyLabel = 'Encrypting & posting…',
 }) {
   return (
     <>
@@ -221,7 +222,7 @@ export function StoryPublishControls({
           </button>
         ) : (
           <button type="button" className="story-composer-post" onClick={onPost} disabled={busy || !canSubmit}>
-            {busy ? 'Encrypting & posting…' : postLabel}
+            {busy ? busyLabel : postLabel}
           </button>
         )}
       </div>

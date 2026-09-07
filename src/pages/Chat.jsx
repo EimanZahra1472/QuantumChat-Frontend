@@ -6016,7 +6016,11 @@ useEffect(() => {
         }}
         storiesRailRef={storiesRailRef}
         users={users}
-        onStoriesError={setError}
+        onStoriesError={(msg) => {
+          const text = String(msg || 'Something went wrong with your status');
+          setError(text);
+          showToast(text, 'error');
+        }}
         notifSettings={notifSettings}
         search={search}
         onSearchChange={setSearch}

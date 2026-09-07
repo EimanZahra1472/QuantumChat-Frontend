@@ -16,11 +16,22 @@ export async function addHighlightItem({ category, file, sourceStoryId, caption,
   const form = new FormData();
   form.append('file', file);
   form.append('category', category);
-  if (sourceStoryId) form.append('sourceStoryId', sourceStoryId);
+  if (sourceStoryId) form.append('sourceStoryId', String(sourceStoryId));
   if (caption) form.append('caption', caption);
   if (durationMs != null) form.append('durationMs', String(durationMs));
   if (mediaType) form.append('mediaType', mediaType);
-  const { data } = await client.post('/highlights/items', form);
+  const { data } = await client.post('/highlights/items', form, {
+    // Let the browser set multipart boundary — do not force JSON content-type.
+    headers: { 'Content-Type': 'multipart/form-data' },
+    transformRequest: [
+      (body, headers) => {
+        if (body instanceof FormData) {
+          delete headers['Content-Type'];
+        }
+        return body;
+      },
+    ],
+  });
   return data.data;
 }
 

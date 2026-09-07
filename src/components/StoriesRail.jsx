@@ -20,7 +20,11 @@ import StoryDraftsPanel from './StoryDraftsPanel.jsx';
 import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
 import TextStoryComposer from './TextStoryComposer.jsx';
 import UserAvatar from './UserAvatar.jsx';
+import { compressVideo } from '../crypto/videoCompressor.js';
 const MAX_STORY_SECONDS = 60;
+const MAX_STORY_UPLOAD_BYTES = 95 * 1024 * 1024; // stay under server 100MB limit
+const COMPRESS_IF_LARGER_THAN = 4 * 1024 * 1024; // compress status videos over ~4MB
+const FORCE_COMPRESS_IF_LARGER_THAN = 20 * 1024 * 1024; // don't skip re-encode above ~20MB
 const TTL_PRESETS = [
   { label: '1 hour', ms: 60 * 60 * 1000 },
   { label: '6 hours', ms: 6 * 60 * 60 * 1000 },
@@ -92,14 +96,29 @@ function probeMediaDuration(file) {
     const isVideo = file.type.startsWith('video/');
     const el = document.createElement(isVideo ? 'video' : 'audio');
     el.preload = 'metadata';
-    el.onloadedmetadata = () => {
-      const durationMs = Math.round((el.duration || 0) * 1000);
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       URL.revokeObjectURL(url);
-      resolve(durationMs);
+      el.removeAttribute('src');
+      el.load?.();
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      finish(reject, new Error('Could not read this video — try another clip'));
+    }, 12_000);
+    el.onloadedmetadata = () => {
+      const seconds = el.duration;
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        finish(reject, new Error('Could not read this video duration — try another clip'));
+        return;
+      }
+      finish(resolve, Math.round(seconds * 1000));
     };
     el.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Could not read media duration'));
+      finish(reject, new Error('Could not read this video — try another clip'));
     };
     el.src = url;
   });
@@ -177,6 +196,8 @@ function viewerCanSeeStory(story, currentUserId) {
 
 /** Session cache of decrypted story object URLs — reopening a status is instant. */
 const storyMediaCache = new Map();
+/** Parallel blob cache so highlights can upload without re-fetching. */
+const storyMediaBlobCache = new Map();
 
 function cacheKeyForStory(story) {
   return `${story.id}:${story.sealed ? '1' : '0'}:${story.contentIv || ''}`;
@@ -213,6 +234,8 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [viewer, setViewer] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPhase, setUploadPhase] = useState(''); // '', 'compress', 'encrypt', 'upload'
+  const [composerError, setComposerError] = useState('');
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -339,6 +362,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
     setCreateSheetOpen(false);
     setTextComposerOpen(false);
+    setComposerError('');
     setPendingFile(file);
     setPendingPreviewUrl(URL.createObjectURL(file));
   }
@@ -359,9 +383,17 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   }
 
 
+  function reportStoryError(message) {
+    const text = String(message || 'Failed to upload story');
+    setComposerError(text);
+    onError?.(text);
+  }
+
   async function uploadStory(file, ttlMs, allowReplies = true, options = {}) {
     try {
       setUploading(true);
+      setUploadPhase('');
+      setComposerError('');
 
       // Make sure our local keyring is actually in sync with the server before
       // sealing anything to it — this is the fix for stories being undecryptable.
@@ -371,19 +403,64 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       const ownerUser = getStoredUser() || currentUser;
       const sync = getKeyringSyncStatus(ownerUser.id, ownerUser.publicKeys || []);
       if (sync.status !== 'synced') {
-        onError?.(
+        reportStoryError(
           'Encryption keys are out of sync with the server. Use Settings → Regenerate & resync keys before posting stories.'
         );
         return false;
       }
 
+      let fileToUpload = file;
       let durationMs = 0;
-      if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
-        durationMs = await probeMediaDuration(file);
-        if (durationMs > MAX_STORY_SECONDS * 1000) {
-          onError?.(`Stories must be ${MAX_STORY_SECONDS} seconds or shorter`);
+      const looksLikeAv =
+        file.type.startsWith('video/') ||
+        file.type.startsWith('audio/') ||
+        /\.(mp4|mov|webm|m4v|mkv|mp3|m4a|wav|ogg)$/i.test(file.name || '');
+      if (looksLikeAv) {
+        try {
+          durationMs = await probeMediaDuration(file);
+        } catch (err) {
+          reportStoryError(err?.message || 'Could not read this media file');
           return false;
         }
+        if (durationMs > MAX_STORY_SECONDS * 1000) {
+          reportStoryError(
+            `This video is too long (${Math.ceil(durationMs / 1000)}s). Stories must be ${MAX_STORY_SECONDS} seconds or shorter.`
+          );
+          return false;
+        }
+      }
+
+      // Large phone videos exceed the upload limit — compress before sealing.
+      const isVideo =
+        file.type.startsWith('video/') ||
+        /\.(mp4|mov|webm|m4v|mkv)$/i.test(file.name || '');
+      if (isVideo && file.size > COMPRESS_IF_LARGER_THAN) {
+        setUploadPhase('compress');
+        try {
+          fileToUpload = await compressVideo(
+            file,
+            undefined,
+            undefined,
+            { force: file.size > FORCE_COMPRESS_IF_LARGER_THAN }
+          );
+        } catch (err) {
+          if (file.size > MAX_STORY_UPLOAD_BYTES) {
+            reportStoryError(
+              err?.message ||
+                'Could not compress this video. Try a shorter clip under 60 seconds.'
+            );
+            return false;
+          }
+          // Compression failed but original still fits — continue with original.
+          fileToUpload = file;
+        }
+      }
+
+      if (fileToUpload.size > MAX_STORY_UPLOAD_BYTES) {
+        reportStoryError(
+          'This video is still too large after compression. Try a shorter clip (under 60 seconds).'
+        );
+        return false;
       }
 
       const status = options.status || 'published';
@@ -391,7 +468,8 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
       const canSeal = typeof crypto !== 'undefined' && crypto.subtle;
 
       if (canSeal) {
-        const sealed = await aesGcmEncryptBlob(file);
+        setUploadPhase('encrypt');
+        const sealed = await aesGcmEncryptBlob(fileToUpload);
 
         const ownerKeySet = getCurrentKeySet(ownerUser.id, KEY_SET_SIZE);
         const ownerPublicKeys = ownerKeySet.map((k) => k.publicKey).filter(Boolean);
@@ -445,17 +523,20 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         form.append(
           'file',
           new Blob([sealed.cipherBytes], { type: 'application/octet-stream' }),
-          file.name || 'story.bin'
+          fileToUpload.name || 'story.bin'
         );
         form.append('sealed', 'true');
-        form.append('mimetype', file.type || 'application/octet-stream');
-        if (file.type.startsWith('image/')) form.append('mediaType', 'image');
-        else if (file.type.startsWith('video/')) form.append('mediaType', 'video');
-        else if (file.type.startsWith('audio/')) form.append('mediaType', 'audio');
+        const mime =
+          fileToUpload.type ||
+          (isVideo ? 'video/mp4' : file.type.startsWith('audio/') ? 'audio/webm' : 'application/octet-stream');
+        form.append('mimetype', mime);
+        if (mime.startsWith('image/')) form.append('mediaType', 'image');
+        else if (mime.startsWith('video/') || isVideo) form.append('mediaType', 'video');
+        else if (mime.startsWith('audio/')) form.append('mediaType', 'audio');
         form.append('contentIv', sealed.ivB64);
         form.append('envelopes', JSON.stringify(envelopes));
       } else {
-        form.append('file', file);
+        form.append('file', fileToUpload);
       }
       form.append('durationMs', String(durationMs));
       form.append('ttlMs', String(ttlMs));
@@ -465,15 +546,18 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         form.append('publishAt', options.publishAt);
       }
 
-      await client.post('/stories', form);
+      setUploadPhase('upload');
+      await client.post('/stories', form, { timeout: 5 * 60 * 1000 });
       if (status === 'published') await loadStories();
       await loadDraftsCount();
       return true;
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to upload story');
+      const msg = err.response?.data?.error || err.message || 'Failed to upload story';
+      reportStoryError(msg);
       return false;
     } finally {
       setUploading(false);
+      setUploadPhase('');
     }
   }
 
@@ -482,6 +566,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     setPendingFile(null);
     setPendingPreviewUrl(null);
     setTextComposerOpen(false);
+    setComposerError('');
   }
 
   async function confirmPostStory(ttlMs, allowReplies, options = {}) {
@@ -550,7 +635,15 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
             hasAvatar={currentUser?.hasAvatar}
             size="story"
           />
-          <span className="story-ring-label">{uploading ? 'Uploading…' : 'My status'}</span>
+          <span className="story-ring-label">
+            {uploading
+              ? uploadPhase === 'compress'
+                ? 'Compressing…'
+                : uploadPhase === 'encrypt'
+                  ? 'Encrypting…'
+                  : 'Uploading…'
+              : 'My status'}
+          </span>
         </button>
         <button
           type="button"
@@ -645,7 +738,9 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           onCancel={closeComposer}
           onConfirm={confirmPostStory}
           uploading={uploading}
-          onError={onError}
+          uploadPhase={uploadPhase}
+          error={composerError}
+          onError={reportStoryError}
         />
       )}
       {textComposerOpen && !pendingFile && (
@@ -823,8 +918,9 @@ function StoryViewersSheet({ viewerCount, viewers, onClose }) {
                 <span className="story-viewers-sheet-name">{v.username}</span>
                 <span className="story-viewers-sheet-time">
                   {new Date(v.viewedAt).toLocaleTimeString([], {
-                    hour: '2-digit',
+                    hour: 'numeric',
                     minute: '2-digit',
+                    hour12: true,
                   })}
                 </span>
               </div>
@@ -869,6 +965,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   const [gifResults, setGifResults] = useState([]);
   const [gifLoading, setGifLoading] = useState(false);
   const [saveHighlightOpen, setSaveHighlightOpen] = useState(false);
+  const [mediaBlob, setMediaBlob] = useState(null);
 
   const story = group.items[index];
   const isOwn = String(group.user?.id) === String(currentUserId);
@@ -879,6 +976,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
     let usedCache = false;
 
     setMediaUrl(null);
+    setMediaBlob(null);
     setBlockedReason('');
     setLoadPhase('');
     setDownloadPct(null);
@@ -892,10 +990,12 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
     (async () => {
       const cacheKey = cacheKeyForStory(story);
-      const cached = storyMediaCache.get(cacheKey);
-      if (cached) {
+      const cachedUrl = storyMediaCache.get(cacheKey);
+      const cachedBlob = storyMediaBlobCache.get(cacheKey);
+      if (cachedUrl && cachedBlob) {
         usedCache = true;
-        setMediaUrl(cached);
+        setMediaUrl(cachedUrl);
+        setMediaBlob(cachedBlob);
         return;
       }
 
@@ -930,11 +1030,13 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
         if (abortController.signal.aborted) return;
 
-        objectUrl = URL.createObjectURL(
-          new Blob([plain], { type: story.mimetype || 'application/octet-stream' })
-        );
+        const mime = story.mimetype || 'application/octet-stream';
+        const blob = new Blob([plain], { type: mime });
+        objectUrl = URL.createObjectURL(blob);
         storyMediaCache.set(cacheKey, objectUrl);
+        storyMediaBlobCache.set(cacheKey, blob);
         setMediaUrl(objectUrl);
+        setMediaBlob(blob);
         setLoadPhase('');
         return;
       }
@@ -952,14 +1054,18 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
       if (abortController.signal.aborted) return;
 
-      objectUrl = URL.createObjectURL(res.data);
+      const blob = res.data;
+      objectUrl = URL.createObjectURL(blob);
       storyMediaCache.set(cacheKey, objectUrl);
+      storyMediaBlobCache.set(cacheKey, blob);
       setMediaUrl(objectUrl);
+      setMediaBlob(blob);
       setLoadPhase('');
     })().catch((err) => {
       if (err.name === 'CanceledError' || err.name === 'AbortError') return;
 
       setMediaUrl(null);
+      setMediaBlob(null);
       setLoadPhase('');
 
       if (story.sealed) {
@@ -984,7 +1090,6 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
     return () => {
       abortController.abort();
-      // Keep session-cached URLs alive; only revoke uncached blobs.
       if (objectUrl && !usedCache) {
         const key = cacheKeyForStory(story);
         if (storyMediaCache.get(key) !== objectUrl) URL.revokeObjectURL(objectUrl);
@@ -1559,6 +1664,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
             onClose={() => setSaveHighlightOpen(false)}
             onError={onError}
             mediaUrl={mediaUrl}
+            mediaBlob={mediaBlob}
             story={story}
           />
         )}
@@ -1811,12 +1917,26 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   );
 }
 
-function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, onError }) {
+function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, uploadPhase, error, onError }) {
   const opts = useStoryPublishOptions(DEFAULT_TTL_MS);
   const [showPreview, setShowPreview] = useState(false);
+  const [localError, setLocalError] = useState('');
   const imagePreviewRef = useRef(null);
   const videoPreviewRef = useRef(null);
   const audioPreviewRef = useRef(null);
+
+  const busyPostLabel =
+    uploadPhase === 'compress'
+      ? 'Compressing video…'
+      : uploadPhase === 'upload'
+        ? 'Uploading…'
+        : 'Encrypting & posting…';
+
+  const displayError = error || localError;
+
+  useEffect(() => {
+    setLocalError('');
+  }, [file]);
 
   useEffect(() => {
     let safePreviewUrl = '';
@@ -1843,36 +1963,49 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, onErr
     };
   }, [previewUrl]);
 
+  function reportError(message) {
+    const text = String(message || 'Could not post story');
+    setLocalError(text);
+    onError?.(text);
+  }
+
   async function submit(status) {
     if (uploading) return;
+    setLocalError('');
     try {
       const options = opts.buildOptions(status);
       await onConfirm?.(opts.computeTtlMs(), opts.allowReplies, options);
     } catch (err) {
-      onError?.(err?.message || 'Could not save story');
+      reportError(err?.message || 'Could not save story');
     }
   }
 
-  return (
-    <div className="story-composer-overlay" onClick={onCancel}>
+  const isVideoFile =
+    file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v|mkv)$/i.test(file.name || '');
+
+  return createPortal(
+    <div className="story-composer-overlay" onClick={uploading ? undefined : onCancel}>
       <div className="story-composer" onClick={(e) => e.stopPropagation()}>
         <div className="story-composer-top">
           <span>New story</span>
-          <button type="button" onClick={onCancel} aria-label="Cancel">
+          <button type="button" onClick={onCancel} aria-label="Cancel" disabled={uploading}>
             ×
           </button>
         </div>
 
         <div className="story-composer-preview">
           {file.type.startsWith('image/') && <img ref={imagePreviewRef} alt="" />}
-          {file.type.startsWith('video/') && <video ref={videoPreviewRef} controls />}
+          {isVideoFile && <video ref={videoPreviewRef} controls playsInline />}
           {file.type.startsWith('audio/') && <audio ref={audioPreviewRef} controls />}
         </div>
+
+        {displayError ? <p className="story-composer-error" role="alert">{displayError}</p> : null}
 
         <StoryPublishControls
           opts={opts}
           busy={uploading}
           canSubmit={!uploading}
+          busyLabel={busyPostLabel}
           onPreview={() => setShowPreview(true)}
           onDraft={() => submit('draft')}
           onSchedule={() => submit('scheduled')}
@@ -1888,6 +2021,7 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, onErr
       {showPreview && (
         <StoryLocalPreview file={file} previewUrl={previewUrl} onClose={() => setShowPreview(false)} />
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
