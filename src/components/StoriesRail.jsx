@@ -20,7 +20,10 @@ import StoryDraftsPanel from './StoryDraftsPanel.jsx';
 import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
 import TextStoryComposer from './TextStoryComposer.jsx';
 import UserAvatar from './UserAvatar.jsx';
+import { compressVideo } from '../crypto/videoCompressor.js';
 const MAX_STORY_SECONDS = 60;
+const MAX_STORY_UPLOAD_BYTES = 95 * 1024 * 1024; // stay under server 100MB limit
+const COMPRESS_IF_LARGER_THAN = 12 * 1024 * 1024; // compress videos over ~12MB
 const TTL_PRESETS = [
   { label: '1 hour', ms: 60 * 60 * 1000 },
   { label: '6 hours', ms: 6 * 60 * 60 * 1000 },
@@ -215,6 +218,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [viewer, setViewer] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPhase, setUploadPhase] = useState(''); // '', 'compress', 'encrypt', 'upload'
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -364,6 +368,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   async function uploadStory(file, ttlMs, allowReplies = true, options = {}) {
     try {
       setUploading(true);
+      setUploadPhase('');
 
       // Make sure our local keyring is actually in sync with the server before
       // sealing anything to it — this is the fix for stories being undecryptable.
@@ -379,6 +384,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         return false;
       }
 
+      let fileToUpload = file;
       let durationMs = 0;
       if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
         durationMs = await probeMediaDuration(file);
@@ -388,12 +394,38 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         }
       }
 
+      // Large phone videos exceed the upload limit — compress before sealing.
+      if (file.type.startsWith('video/') && file.size > COMPRESS_IF_LARGER_THAN) {
+        setUploadPhase('compress');
+        try {
+          fileToUpload = await compressVideo(file);
+        } catch (err) {
+          if (file.size > MAX_STORY_UPLOAD_BYTES) {
+            onError?.(
+              err?.message ||
+                'Could not compress this video. Try a shorter clip under 60 seconds.'
+            );
+            return false;
+          }
+          // Compression failed but original still fits — continue with original.
+          fileToUpload = file;
+        }
+      }
+
+      if (fileToUpload.size > MAX_STORY_UPLOAD_BYTES) {
+        onError?.(
+          'This video is still too large after compression. Try a shorter clip (under 60 seconds).'
+        );
+        return false;
+      }
+
       const status = options.status || 'published';
       const form = new FormData();
       const canSeal = typeof crypto !== 'undefined' && crypto.subtle;
 
       if (canSeal) {
-        const sealed = await aesGcmEncryptBlob(file);
+        setUploadPhase('encrypt');
+        const sealed = await aesGcmEncryptBlob(fileToUpload);
 
         const ownerKeySet = getCurrentKeySet(ownerUser.id, KEY_SET_SIZE);
         const ownerPublicKeys = ownerKeySet.map((k) => k.publicKey).filter(Boolean);
@@ -447,17 +479,17 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         form.append(
           'file',
           new Blob([sealed.cipherBytes], { type: 'application/octet-stream' }),
-          file.name || 'story.bin'
+          fileToUpload.name || 'story.bin'
         );
         form.append('sealed', 'true');
-        form.append('mimetype', file.type || 'application/octet-stream');
-        if (file.type.startsWith('image/')) form.append('mediaType', 'image');
-        else if (file.type.startsWith('video/')) form.append('mediaType', 'video');
-        else if (file.type.startsWith('audio/')) form.append('mediaType', 'audio');
+        form.append('mimetype', fileToUpload.type || 'application/octet-stream');
+        if (fileToUpload.type.startsWith('image/')) form.append('mediaType', 'image');
+        else if (fileToUpload.type.startsWith('video/')) form.append('mediaType', 'video');
+        else if (fileToUpload.type.startsWith('audio/')) form.append('mediaType', 'audio');
         form.append('contentIv', sealed.ivB64);
         form.append('envelopes', JSON.stringify(envelopes));
       } else {
-        form.append('file', file);
+        form.append('file', fileToUpload);
       }
       form.append('durationMs', String(durationMs));
       form.append('ttlMs', String(ttlMs));
@@ -467,15 +499,18 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         form.append('publishAt', options.publishAt);
       }
 
+      setUploadPhase('upload');
       await client.post('/stories', form);
       if (status === 'published') await loadStories();
       await loadDraftsCount();
       return true;
     } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to upload story');
+      const msg = err.response?.data?.error || err.message || 'Failed to upload story';
+      onError?.(msg);
       return false;
     } finally {
       setUploading(false);
+      setUploadPhase('');
     }
   }
 
@@ -552,7 +587,15 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
             hasAvatar={currentUser?.hasAvatar}
             size="story"
           />
-          <span className="story-ring-label">{uploading ? 'Uploading…' : 'My status'}</span>
+          <span className="story-ring-label">
+            {uploading
+              ? uploadPhase === 'compress'
+                ? 'Compressing…'
+                : uploadPhase === 'encrypt'
+                  ? 'Encrypting…'
+                  : 'Uploading…'
+              : 'My status'}
+          </span>
         </button>
         <button
           type="button"
@@ -647,6 +690,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           onCancel={closeComposer}
           onConfirm={confirmPostStory}
           uploading={uploading}
+          uploadPhase={uploadPhase}
           onError={onError}
         />
       )}
@@ -825,8 +869,9 @@ function StoryViewersSheet({ viewerCount, viewers, onClose }) {
                 <span className="story-viewers-sheet-name">{v.username}</span>
                 <span className="story-viewers-sheet-time">
                   {new Date(v.viewedAt).toLocaleTimeString([], {
-                    hour: '2-digit',
+                    hour: 'numeric',
                     minute: '2-digit',
+                    hour12: true,
                   })}
                 </span>
               </div>
@@ -1823,12 +1868,19 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   );
 }
 
-function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, onError }) {
+function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, uploadPhase, onError }) {
   const opts = useStoryPublishOptions(DEFAULT_TTL_MS);
   const [showPreview, setShowPreview] = useState(false);
   const imagePreviewRef = useRef(null);
   const videoPreviewRef = useRef(null);
   const audioPreviewRef = useRef(null);
+
+  const busyPostLabel =
+    uploadPhase === 'compress'
+      ? 'Compressing video…'
+      : uploadPhase === 'upload'
+        ? 'Uploading…'
+        : 'Encrypting & posting…';
 
   useEffect(() => {
     let safePreviewUrl = '';
@@ -1885,6 +1937,7 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, onErr
           opts={opts}
           busy={uploading}
           canSubmit={!uploading}
+          busyLabel={busyPostLabel}
           onPreview={() => setShowPreview(true)}
           onDraft={() => submit('draft')}
           onSchedule={() => submit('scheduled')}
