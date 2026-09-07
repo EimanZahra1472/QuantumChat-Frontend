@@ -14350,6 +14350,17 @@ button.message-reply-preview:hover {
   color: rgba(255, 255, 255, 0.55);
 }
 
+.hl-sheet-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 82, 82, 0.14);
+  border: 1px solid rgba(255, 138, 128, 0.35);
+  color: #ffc9c2;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .hl-sheet-icon {
   width: 42px;
   height: 42px;
