@@ -177,6 +177,8 @@ function viewerCanSeeStory(story, currentUserId) {
 
 /** Session cache of decrypted story object URLs — reopening a status is instant. */
 const storyMediaCache = new Map();
+/** Parallel blob cache so highlights can upload without re-fetching. */
+const storyMediaBlobCache = new Map();
 
 function cacheKeyForStory(story) {
   return `${story.id}:${story.sealed ? '1' : '0'}:${story.contentIv || ''}`;
@@ -869,6 +871,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   const [gifResults, setGifResults] = useState([]);
   const [gifLoading, setGifLoading] = useState(false);
   const [saveHighlightOpen, setSaveHighlightOpen] = useState(false);
+  const [mediaBlob, setMediaBlob] = useState(null);
 
   const story = group.items[index];
   const isOwn = String(group.user?.id) === String(currentUserId);
@@ -879,6 +882,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
     let usedCache = false;
 
     setMediaUrl(null);
+    setMediaBlob(null);
     setBlockedReason('');
     setLoadPhase('');
     setDownloadPct(null);
@@ -892,10 +896,12 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
     (async () => {
       const cacheKey = cacheKeyForStory(story);
-      const cached = storyMediaCache.get(cacheKey);
-      if (cached) {
+      const cachedUrl = storyMediaCache.get(cacheKey);
+      const cachedBlob = storyMediaBlobCache.get(cacheKey);
+      if (cachedUrl && cachedBlob) {
         usedCache = true;
-        setMediaUrl(cached);
+        setMediaUrl(cachedUrl);
+        setMediaBlob(cachedBlob);
         return;
       }
 
@@ -930,11 +936,13 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
         if (abortController.signal.aborted) return;
 
-        objectUrl = URL.createObjectURL(
-          new Blob([plain], { type: story.mimetype || 'application/octet-stream' })
-        );
+        const mime = story.mimetype || 'application/octet-stream';
+        const blob = new Blob([plain], { type: mime });
+        objectUrl = URL.createObjectURL(blob);
         storyMediaCache.set(cacheKey, objectUrl);
+        storyMediaBlobCache.set(cacheKey, blob);
         setMediaUrl(objectUrl);
+        setMediaBlob(blob);
         setLoadPhase('');
         return;
       }
@@ -952,14 +960,18 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
       if (abortController.signal.aborted) return;
 
-      objectUrl = URL.createObjectURL(res.data);
+      const blob = res.data;
+      objectUrl = URL.createObjectURL(blob);
       storyMediaCache.set(cacheKey, objectUrl);
+      storyMediaBlobCache.set(cacheKey, blob);
       setMediaUrl(objectUrl);
+      setMediaBlob(blob);
       setLoadPhase('');
     })().catch((err) => {
       if (err.name === 'CanceledError' || err.name === 'AbortError') return;
 
       setMediaUrl(null);
+      setMediaBlob(null);
       setLoadPhase('');
 
       if (story.sealed) {
@@ -984,7 +996,6 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
 
     return () => {
       abortController.abort();
-      // Keep session-cached URLs alive; only revoke uncached blobs.
       if (objectUrl && !usedCache) {
         const key = cacheKeyForStory(story);
         if (storyMediaCache.get(key) !== objectUrl) URL.revokeObjectURL(objectUrl);
@@ -1559,6 +1570,7 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
             onClose={() => setSaveHighlightOpen(false)}
             onError={onError}
             mediaUrl={mediaUrl}
+            mediaBlob={mediaBlob}
             story={story}
           />
         )}
