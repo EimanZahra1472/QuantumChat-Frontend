@@ -2,14 +2,14 @@ import { Archive, BadgeCheck, Ban, Cake, Clock, Flag, Lock, Sparkles, UserMinus,
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import client, { submitReport } from '../api/client.js';
-import UserAvatar from './UserAvatar.jsx';
 import { getDisplayName } from '../utils/getDisplayName.js';
 import {
   AI_BG_THEMES,
   readStoredAiBg,
   writeStoredAiBg,
 } from '../utils/aiPanelBg.js';
-
+import ProfileHighlights from './ProfileHighlights.jsx';
+import UserAvatar from './UserAvatar.jsx';
 
 const REPORT_REASONS = [
   { value: 'spam', label: 'Spam' },
@@ -227,6 +227,8 @@ export default function UserProfileModal({
           </div>
         ) : (
           <div className="user-profile-body">
+            <ProfileHighlights userId={profile?.id || userId} onError={setError} />
+
             {showActions && (
               <section className="user-profile-section">
                 <h3 className="user-profile-section-title">Chat actions</h3>
