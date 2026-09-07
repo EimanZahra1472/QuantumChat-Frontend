@@ -9565,6 +9565,17 @@ body.theme-light .settings-field select option {
   color: var(--text-muted);
 }
 
+.story-composer-error {
+  margin: 0 16px 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 @media (max-width: 768px) {
   .stories-rail {
     flex-wrap: nowrap;
@@ -10460,7 +10471,7 @@ body.theme-light .settings-field select option {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 11050;
   animation: storyOverlayFadeIn 180ms ease both;
 }
 

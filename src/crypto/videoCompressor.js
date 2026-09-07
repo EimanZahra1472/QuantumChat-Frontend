@@ -90,11 +90,11 @@ function demux(file) {
   });
 }
 
-async function compressVideoWebCodecs(file, onProgress) {
+async function compressVideoWebCodecs(file, onProgress, options = {}) {
   const { videoTrack, audioTrack, videoSamples, audioSamples, videoDescription } = await demux(file);
 
   const durationSeconds = videoSamples.reduce((max, s) => Math.max(max, s.cts + s.duration), 0) / videoTrack.timescale;
-  if (await alreadyGoodEnough(file, videoTrack, durationSeconds)) {
+  if (!options.force && (await alreadyGoodEnough(file, videoTrack, durationSeconds))) {
     onProgress?.(1);
     return null; // signal "no compression needed" — caller sends the original file
   }
@@ -267,11 +267,18 @@ async function compressVideoWasm(file, onProgress) {
 
 // ---------- public entry point: WebCodecs -> wasm -> original ----------
 
-export async function compressVideo(file, onProgress, onPhaseChange) {
+/**
+ * @param {File} file
+ * @param {(n: number) => void} [onProgress]
+ * @param {(phase: string) => void} [onPhaseChange]
+ * @param {{ force?: boolean }} [options] force=true skips the "already small enough" short-circuit
+ */
+export async function compressVideo(file, onProgress, onPhaseChange, options = {}) {
+  const force = Boolean(options?.force);
   if (isWebCodecsSupported()) {
     try {
       onPhaseChange?.('encoding');
-      const result = await compressVideoWebCodecs(file, onProgress);
+      const result = await compressVideoWebCodecs(file, onProgress, { force });
       return result || file; // null means "already good enough" — send original
     } catch {
       // Unsupported container, decode error, etc. — fall through to wasm path.
