@@ -732,7 +732,6 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         </div>
       )}
       {pendingFile && (
-      {pendingFile && (
         <StoryComposer
           file={pendingFile}
           previewUrl={pendingPreviewUrl}
