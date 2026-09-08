@@ -1,9 +1,10 @@
-import { BookmarkPlus, Play, RotateCcw, Trash2 } from 'lucide-react';
+import { BookmarkPlus, Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
-import StoryDraftsPanel from './StoryDraftsPanel.jsx';
+import { resolveStoryMediaBlob } from '../utils/storyMedia.js';
 import HighlightPickerSheet from './HighlightPickerSheet.jsx';
+import StoryDraftsPanel from './StoryDraftsPanel.jsx';
 
 function formatWhen(iso) {
   if (!iso) return '';
@@ -19,51 +20,50 @@ function formatWhen(iso) {
   }
 }
 
-function ActiveTab({ currentUserId, onError, onOpenHighlight, onPreviewStory }) {
+function ActiveTab({ currentUserId, onError, onPreviewStory }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const { data } = await client.get('/stories');
-      const mine = (data.data || [])
-        .filter((s) => String(s.user?.id || s.user) === String(currentUserId))
-        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      setItems(mine);
-    } catch (err) {
-      onError?.(err.response?.data?.error || err.message || 'Failed to load active stories');
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let cancelled = false;
+    setLoading(true);
+    client
+      .get('/stories')
+      .then(({ data }) => {
+        if (cancelled) return;
+        const mine = (data.data || [])
+          .filter((s) => String(s.user?.id || s.user) === String(currentUserId))
+          .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        setItems(mine);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        onError?.(err.response?.data?.error || err.message || 'Failed to load active stories');
+        setItems([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
 
   if (loading) return <p className="empty-hint">Loading…</p>;
-  if (!items.length) return <p className="empty-hint">No live stories right now — post one and it'll show up here.</p>;
+  if (!items.length) return <p className="empty-hint">No active stories right now.</p>;
 
   return (
     <ul className="story-drafts-list">
-      {items.map((item, i) => (
+      {items.map((item, idx) => (
         <li key={item.id} className="story-drafts-row">
           <div className="story-drafts-meta">
-            <span className="story-drafts-badge">Live</span>
+            <span className="story-drafts-badge scheduled">Live</span>
             <strong>{item.mediaType || 'media'}</strong>
             <span className="story-drafts-when">Posted {formatWhen(item.createdAt)}</span>
           </div>
           <div className="story-drafts-actions">
-            <button type="button" onClick={() => onPreviewStory(items, i)}>
-              <Play size={16} aria-hidden />
-              View
-            </button>
-            <button type="button" onClick={() => onOpenHighlight(item)}>
-              <BookmarkPlus size={16} aria-hidden />
-              Save to highlight
+            <button type="button" onClick={() => onPreviewStory?.(items, idx)}>
+              Preview
             </button>
           </div>
         </li>
@@ -72,10 +72,11 @@ function ActiveTab({ currentUserId, onError, onOpenHighlight, onPreviewStory }) 
   );
 }
 
-function ArchiveTab({ onError, onChanged, onOpenHighlight }) {
+function ArchiveTab({ currentUserId, onError, onChanged, onOpenHighlight }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
+  const [highlightBusyId, setHighlightBusyId] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -121,6 +122,18 @@ function ArchiveTab({ onError, onChanged, onOpenHighlight }) {
     }
   }
 
+  async function openHighlightFor(story) {
+    setHighlightBusyId(story.id);
+    try {
+      const blob = await resolveStoryMediaBlob(story, currentUserId);
+      onOpenHighlight?.(story, blob);
+    } catch (err) {
+      onError?.(err.message || 'Could not load this story\u2019s media');
+    } finally {
+      setHighlightBusyId(null);
+    }
+  }
+
   if (loading) return <p className="empty-hint">Loading…</p>;
   if (!items.length) return <p className="empty-hint">No expired stories yet — anything that expires stays here.</p>;
 
@@ -128,6 +141,7 @@ function ArchiveTab({ onError, onChanged, onOpenHighlight }) {
     <ul className="story-drafts-list">
       {items.map((item) => {
         const busy = busyId === item.id;
+        const highlightBusy = highlightBusyId === item.id;
         return (
           <li key={item.id} className="story-drafts-row">
             <div className="story-drafts-meta">
@@ -136,15 +150,20 @@ function ArchiveTab({ onError, onChanged, onOpenHighlight }) {
               <span className="story-drafts-when">Expired {formatWhen(item.expiresAt)}</span>
             </div>
             <div className="story-drafts-actions">
-              <button type="button" disabled={busy} onClick={() => onOpenHighlight(item)}>
-                <BookmarkPlus size={16} aria-hidden />
+              <button type="button" disabled={busy || highlightBusy} onClick={() => openHighlightFor(item)}>
+                {highlightBusy ? <Loader2 size={16} className="hl-spin" aria-hidden /> : <BookmarkPlus size={16} aria-hidden />}
                 Save to highlight
               </button>
-              <button type="button" className="story-drafts-publish" disabled={busy} onClick={() => reshare(item.id)}>
+              <button
+                type="button"
+                className="story-drafts-publish"
+                disabled={busy || highlightBusy}
+                onClick={() => reshare(item.id)}
+              >
                 <RotateCcw size={16} aria-hidden />
                 {busy ? 'Resharing…' : 'Reshare'}
               </button>
-              <button type="button" className="danger" disabled={busy} onClick={() => remove(item.id)}>
+              <button type="button" className="danger" disabled={busy || highlightBusy} onClick={() => remove(item.id)}>
                 <Trash2 size={16} aria-hidden />
                 Delete
               </button>
@@ -159,24 +178,25 @@ function ArchiveTab({ onError, onChanged, onOpenHighlight }) {
 export default function StoryHistoryPanel({
   open,
   onClose,
-  onError,
-  onChanged,
   currentUserId,
   initialTab = 'active',
+  onError,
+  onChanged,
   onPreviewDraft,
   onPreviewStory,
 }) {
   const [tab, setTab] = useState(initialTab);
-  const [highlightTarget, setHighlightTarget] = useState(null);
+  const [highlightTarget, setHighlightTarget] = useState(null); // { story, blob }
 
   useEffect(() => {
-    if (open) setTab(initialTab);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (open) setTab(initialTab || 'active');
   }, [open, initialTab]);
 
   if (!open) return null;
 
-  // Drafts tab reuses the existing StoryDraftsPanel wholesale — same open/close contract.
+  // Drafts keeps its own full sheet — it already owns edit/schedule/publish
+  // flows we don't want to reimplement. Closing it returns to the tab picker
+  // rather than closing the whole history flow.
   if (tab === 'drafts') {
     return (
       <StoryDraftsPanel
@@ -213,22 +233,15 @@ export default function StoryHistoryPanel({
         </div>
 
         {tab === 'active' && (
-          <ActiveTab
-            currentUserId={currentUserId}
-            onError={onError}
-            onOpenHighlight={(story) => setHighlightTarget(story)}
-            onPreviewStory={(items, index) => {
-              onClose?.();
-              onPreviewStory?.(items, index);
-            }}
-          />
+          <ActiveTab currentUserId={currentUserId} onError={onError} onPreviewStory={onPreviewStory} />
         )}
 
         {tab === 'archive' && (
           <ArchiveTab
+            currentUserId={currentUserId}
             onError={onError}
             onChanged={onChanged}
-            onOpenHighlight={(story) => setHighlightTarget(story)}
+            onOpenHighlight={(story, blob) => setHighlightTarget({ story, blob })}
           />
         )}
       </div>
@@ -239,8 +252,8 @@ export default function StoryHistoryPanel({
           onClose={() => setHighlightTarget(null)}
           onError={onError}
           onSaved={() => setHighlightTarget(null)}
-          mediaUrl={`/api/stories/${highlightTarget.id}/media`}
-          story={highlightTarget}
+          mediaBlob={highlightTarget.blob}
+          story={highlightTarget.story}
         />
       )}
     </div>,

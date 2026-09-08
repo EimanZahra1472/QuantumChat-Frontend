@@ -2,6 +2,15 @@ import { BookmarkPlus, Camera, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
+import {
+  aesGcmDecryptBytes,
+  cacheKeyForStory,
+  resolveStoryMediaBlob,
+  storyMediaBlobCache,
+  storyMediaCache,
+  unlockStoryKey,
+  viewerCanSeeStory,
+} from '../utils/storyMedia.js';
 import { getSocket } from '../api/socket.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { KEY_SET_SIZE, pickRandom, sealBytes, sealMessage, unsealMessage } from '../crypto/keys.js';
@@ -74,21 +83,7 @@ async function aesGcmEncryptBlob(file) {
   };
 }
 
-async function aesGcmDecryptBytes(cipherBytes, keyB64, ivB64) {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    base64ToBytes(keyB64),
-    { name: 'AES-GCM' },
-    false,
-    ['decrypt']
-  );
-  const plain = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: base64ToBytes(ivB64) },
-    key,
-    cipherBytes
-  );
-  return new Uint8Array(plain);
-}
+
 
 function probeMediaDuration(file) {
   return new Promise((resolve, reject) => {
@@ -124,9 +119,7 @@ function probeMediaDuration(file) {
   });
 }
 
-function envelopeUserId(envelope) {
-  return String(envelope?.user?.id || envelope?.user || '');
-}
+
 
 function buildStoryEnvelopes(audience, keyB64, ivB64) {
   const secretPayload = JSON.stringify({ keyB64, ivB64 });
@@ -138,70 +131,16 @@ function buildStoryEnvelopes(audience, keyB64, ivB64) {
   });
 }
 
-function tryParseKeyPayload(text) {
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed?.keyB64 && parsed?.ivB64) return parsed;
-  } catch {
-    // ignore
-  }
-  return null;
-}
 
 /**
  * Open the AES media key from any of this viewer's story envelopes.
  * Returns { ok: true, payload } on success, or { ok: false, reason, targetPublicKey? }
  * so the UI can show a precise message (no envelope vs. no matching secret vs. decrypt failure).
  */
-function unlockStoryKey(story, currentUserId) {
-  const uid = String(currentUserId?.id || currentUserId || '');
-  if (!uid) return { ok: false, reason: 'no-envelope' };
 
-  const envelopes = (story.envelopes || []).filter((e) => envelopeUserId(e) === uid);
-  if (!envelopes.length) return { ok: false, reason: 'no-envelope' };
 
-  const ring = getKeyring(uid);
 
-  for (const envelope of envelopes) {
-    const hinted = envelope.targetPublicKey
-      ? findSecretKeyForPublicKey(uid, envelope.targetPublicKey)
-      : null;
 
-    if (hinted) {
-      const payload = tryParseKeyPayload(unsealMessage(envelope, hinted));
-      if (payload) return { ok: true, payload };
-    }
-
-    // Fallback: try every local secret (covers a stale/mismatched targetPublicKey hint).
-    for (const entry of ring) {
-      if (hinted && entry.secretKey === hinted) continue;
-      const payload = tryParseKeyPayload(unsealMessage(envelope, entry.secretKey));
-      if (payload) return { ok: true, payload };
-    }
-  }
-
-  return {
-    ok: false,
-    reason: 'no-secret',
-    targetPublicKey: envelopes[0]?.targetPublicKey,
-  };
-}
-
-function viewerCanSeeStory(story, currentUserId) {
-  if (!story?.sealed) return true;
-  const uid = String(currentUserId?.id || currentUserId || '');
-  return (story.envelopes || []).some((e) => envelopeUserId(e) === uid);
-}
-
-/** Session cache of decrypted story object URLs — reopening a status is instant. */
-const storyMediaCache = new Map();
-/** Parallel blob cache so highlights can upload without re-fetching. */
-const storyMediaBlobCache = new Map();
-
-function cacheKeyForStory(story) {
-  return `${story.id}:${story.sealed ? '1' : '0'}:${story.contentIv || ''}`;
-}
 
 function formatElapsed(dateStr) {
   if (!dateStr) return '';
@@ -236,8 +175,10 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   const [uploading, setUploading] = useState(false);
   const [uploadPhase, setUploadPhase] = useState(''); // '', 'compress', 'encrypt', 'upload'
   const [composerError, setComposerError] = useState('');
-  const [pendingFile, setPendingFile] = useState(null);
-  const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
+ const [pendingQueue, setPendingQueue] = useState([]); // File[]
+  const [pendingIndex, setPendingIndex] = useState(0);
+ const [pendingPreviewUrl, setPendingPreviewUrl] = useState(null);
+ const [batchProgress, setBatchProgress] = useState(null); // { done, total } while posting
   const [unavailable, setUnavailable] = useState(false);
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
   const [textComposerOpen, setTextComposerOpen] = useState(false);
@@ -357,15 +298,16 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   }, [createSheetOpen]);
 
   function handleFileSelected(e) {
-    const file = e.target.files?.[0];
+     const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
     setCreateSheetOpen(false);
     setTextComposerOpen(false);
     setComposerError('');
-    setPendingFile(file);
-    setPendingPreviewUrl(URL.createObjectURL(file));
+ setPendingQueue(files);
+   setPendingIndex(0);
+    setPendingPreviewUrl(URL.createObjectURL(files[0]));
   }
 
   function openCreateSheet() {
@@ -564,19 +506,45 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
 
   function closeComposer() {
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
-    setPendingFile(null);
-    setPendingPreviewUrl(null);
-    setTextComposerOpen(false);
-    setComposerError('');
+    setPendingQueue([]);
+    setPendingIndex(0);
+     setPendingPreviewUrl(null);
+     setTextComposerOpen(false);
+     setComposerError('');
+    setBatchProgress(null);
+
   }
 
   async function confirmPostStory(ttlMs, allowReplies, options = {}) {
-    const file = pendingFile;
-    if (!file || uploading) return;
-    const ok = await uploadStory(file, ttlMs, allowReplies, options);
-    if (ok) closeComposer();
-  }
+     if (!pendingQueue.length || uploading) return;
+    const total = pendingQueue.length;
+    setBatchProgress({ done: 0, total });
 
+    for (let i = 0; i < total; i += 1) {
+     const file = pendingQueue[i];
+      setPendingIndex(i);
+      if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+      setPendingPreviewUrl(URL.createObjectURL(file));
+
+      // Scheduled batches: stagger publishAt by a few seconds each so they
+      // don't all collide on the same instant and reorder unpredictably.
+      const itemOptions =
+        options.status === 'scheduled' && options.publishAt
+          ? { ...options, publishAt: new Date(new Date(options.publishAt).getTime() + i * 5000).toISOString() }
+          : options;
+
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await uploadStory(file, ttlMs, allowReplies, itemOptions);
+      if (!ok) {
+        // uploadStory already reported the error via reportStoryError.
+        setBatchProgress(null);
+        return;
+      }
+      setBatchProgress({ done: i + 1, total });
+    }
+
+    closeComposer();
+   }
   async function confirmPostTextStory(file, ttlMs, allowReplies, options = {}) {
     if (!file || uploading) return;
     const ok = await uploadStory(file, ttlMs, allowReplies, options);
@@ -664,6 +632,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         ref={mediaInputRef}
         type="file"
         accept="image/*,video/*"
+        multiple
         hidden
         onChange={handleFileSelected}
       />
@@ -671,6 +640,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         ref={audioInputRef}
         type="file"
         accept="audio/*"
+        multiple
         hidden
         onChange={handleFileSelected}
       />
@@ -735,19 +705,21 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           </div>
         </div>
       )}
-      {pendingFile && (
+     {pendingQueue.length > 0 && (
         <StoryComposer
-          file={pendingFile}
+         file={pendingQueue[pendingIndex]}
           previewUrl={pendingPreviewUrl}
           onCancel={closeComposer}
           onConfirm={confirmPostStory}
           uploading={uploading}
           uploadPhase={uploadPhase}
+                    batchProgress={batchProgress}
+         queueLength={pendingQueue.length}
           error={composerError}
           onError={reportStoryError}
         />
       )}
-      {textComposerOpen && !pendingFile && (
+            {textComposerOpen && !pendingQueue.length && (
         <TextStoryComposer
           onCancel={() => setTextComposerOpen(false)}
           onConfirm={confirmPostTextStory}
@@ -871,7 +843,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         )}
 
       {!uploading &&
-        !pendingFile &&
+         !pendingQueue.length &&
         !textComposerOpen &&
         !createSheetOpen &&
         !viewer &&
@@ -1104,6 +1076,27 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
       }
     };
   }, [story.id, story.sealed, story.contentIv, story.mimetype, currentUserId]);
+
+  // Prefetch the next story's media in the background so tapping "next"
+  // feels instant instead of showing a loading spinner every time.
+  useEffect(() => {
+    const nextStory = group.items[index + 1];
+    if (!nextStory) return undefined;
+    if (!viewerCanSeeStory(nextStory, currentUserId)) return undefined;
+
+    const nextCacheKey = cacheKeyForStory(nextStory);
+    if (storyMediaBlobCache.has(nextCacheKey)) return undefined; // already warm
+
+    let cancelled = false;
+    // Best-effort — a failed prefetch just means the normal loader kicks in
+    // when the user actually navigates there, so errors are intentionally swallowed.
+    resolveStoryMediaBlob(nextStory, currentUserId).catch(() => {
+      if (cancelled) return;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [index, group.items, currentUserId]);
 
   useEffect(() => {
     if (!isOwn) return;
@@ -1925,7 +1918,18 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
   );
 }
 
-function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, uploadPhase, error, onError }) {
+function StoryComposer({
+  file,
+  previewUrl,
+  onCancel,
+  onConfirm,
+  uploading,
+  uploadPhase,
+  batchProgress,
+  queueLength = 1,
+  error,
+  onError,
+}) {
   const opts = useStoryPublishOptions(DEFAULT_TTL_MS);
   const [showPreview, setShowPreview] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -1995,7 +1999,13 @@ function StoryComposer({ file, previewUrl, onCancel, onConfirm, uploading, uploa
     <div className="story-composer-overlay" onClick={uploading ? undefined : onCancel}>
       <div className="story-composer" onClick={(e) => e.stopPropagation()}>
         <div className="story-composer-top">
-          <span>New story</span>
+           <span>
+            {queueLength > 1
+              ? batchProgress
+                ? `Posting ${batchProgress.done + 1} of ${batchProgress.total}…`
+                : `New story (${queueLength} selected)`
+              : 'New story'}
+          </span>
           <button type="button" onClick={onCancel} aria-label="Cancel" disabled={uploading}>
             ×
           </button>
