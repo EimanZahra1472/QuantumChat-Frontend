@@ -813,7 +813,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                   className="status-create-option"
                   onClick={() => {
                     setCreateSheetOpen(false);
-                     setHistoryTab('drafts');
+                    setHistoryTab('active');
                     setHistoryOpen(true);
                   }}
                 >
