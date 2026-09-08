@@ -9,19 +9,18 @@ import {
   getHighlight,
   listHighlights,
 } from '../api/highlights.js';
-import { HIGHLIGHT_CATEGORIES, getHighlightCategory } from '../constants/highlightCategories.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 const coverCache = new Map();
 
-function HighlightRing({ highlight, onClick, empty, category }) {
+function HighlightRing({ highlight, onClick }) {
   const [coverUrl, setCoverUrl] = useState(null);
-  const cat = category || getHighlightCategory(highlight?.category);
+  const empty = !highlight.itemCount;
 
   useEffect(() => {
     let revoked = false;
     let objectUrl;
-    if (!highlight?.id || empty || !highlight.itemCount) {
+    if (!highlight.hasCover) {
       setCoverUrl(null);
       return undefined;
     }
@@ -43,29 +42,27 @@ function HighlightRing({ highlight, onClick, empty, category }) {
     return () => {
       revoked = true;
     };
-  }, [highlight?.id, highlight?.itemCount, empty]);
+  }, [highlight.id, highlight.hasCover]);
 
   return (
     <button
       type="button"
-      className={`hl-ring${empty ? ' empty' : ''}${highlight?.itemCount ? ' has-items' : ''}`}
+      className={`hl-ring${empty ? ' empty' : ''}${!empty ? ' has-items' : ''}`}
       onClick={onClick}
       disabled={empty}
-      aria-label={cat ? `${cat.label} highlight` : 'Highlight'}
+      aria-label={`${highlight.name} highlight`}
     >
       <span className="hl-ring-orb">
         {coverUrl ? (
           <img src={coverUrl} alt="" className="hl-ring-cover" />
         ) : (
           <span className="hl-ring-emoji" aria-hidden>
-            {cat?.emoji || '✨'}
+            {(highlight.name || '?').trim().charAt(0).toUpperCase() || '★'}
           </span>
         )}
       </span>
-      <span className="hl-ring-label">{cat?.label || highlight?.label || 'Highlight'}</span>
-      {highlight?.itemCount > 0 ? (
-        <span className="hl-ring-count">{highlight.itemCount}</span>
-      ) : null}
+      <span className="hl-ring-label">{highlight.name}</span>
+      {highlight.itemCount > 0 ? <span className="hl-ring-count">{highlight.itemCount}</span> : null}
     </button>
   );
 }
@@ -175,16 +172,16 @@ function HighlightViewer({ highlightId, isOwner, onClose, onChanged, onError }) 
     }
   }
 
-  const cat = getHighlightCategory(highlight?.category);
-
   return createPortal(
     <div className="hl-viewer-overlay" onClick={onClose}>
       <div className="hl-viewer" onClick={(e) => e.stopPropagation()}>
         <div className="hl-viewer-top">
           <div className="hl-viewer-title">
-            <span className="hl-viewer-emoji">{cat?.emoji || '✨'}</span>
+            <span className="hl-viewer-emoji" aria-hidden>
+              {(highlight?.name || '?').trim().charAt(0).toUpperCase() || '★'}
+            </span>
             <div>
-              <strong>{highlight?.label || cat?.label || 'Highlight'}</strong>
+              <strong>{highlight?.name || 'Highlight'}</strong>
               <span>
                 {loading ? 'Loading…' : `${(index || 0) + 1} / ${highlight?.items?.length || 0}`}
               </span>
@@ -210,12 +207,7 @@ function HighlightViewer({ highlightId, isOwner, onClose, onChanged, onError }) 
         </div>
 
         <div className="hl-viewer-nav">
-          <button
-            type="button"
-            disabled={index <= 0}
-            onClick={() => setIndex((i) => i - 1)}
-            aria-label="Previous"
-          >
+          <button type="button" disabled={index <= 0} onClick={() => setIndex((i) => i - 1)} aria-label="Previous">
             <ChevronLeft size={22} />
           </button>
           <button
@@ -245,7 +237,9 @@ function HighlightViewer({ highlightId, isOwner, onClose, onChanged, onError }) 
 }
 
 /**
- * Profile highlights rail — Instagram-style category circles under the avatar.
+ * Profile highlights rail — Instagram-style circles under the avatar.
+ * The server already limits empty (itemCount: 0) highlights to their
+ * owner, so no client-side ownership filtering of the list is needed.
  */
 export default function ProfileHighlights({ userId, onError }) {
   const { user } = useAuth();
@@ -270,15 +264,10 @@ export default function ProfileHighlights({ userId, onError }) {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  const byCategory = new Map(highlights.map((h) => [h.category, h]));
-  const showEmptyOwnerSlots = isOwner;
-  const visibleCategories = showEmptyOwnerSlots
-    ? HIGHLIGHT_CATEGORIES
-    : HIGHLIGHT_CATEGORIES.filter((c) => (byCategory.get(c.id)?.itemCount || 0) > 0);
-
-  if (!loading && visibleCategories.length === 0) return null;
+  if (!loading && highlights.length === 0) return null;
 
   return (
     <section className="hl-profile-section" aria-label="Story highlights">
@@ -294,21 +283,9 @@ export default function ProfileHighlights({ userId, onError }) {
                 <span className="hl-ring-label skeleton skeleton-line" />
               </div>
             ))
-          : visibleCategories.map((cat) => {
-              const highlight = byCategory.get(cat.id);
-              const empty = !highlight?.itemCount;
-              return (
-                <HighlightRing
-                  key={cat.id}
-                  category={cat}
-                  highlight={highlight}
-                  empty={empty && isOwner}
-                  onClick={() => {
-                    if (highlight?.itemCount) setActiveId(highlight.id);
-                  }}
-                />
-              );
-            })}
+          : highlights.map((h) => (
+              <HighlightRing key={h.id} highlight={h} onClick={() => h.itemCount && setActiveId(h.id)} />
+            ))}
       </div>
       {isOwner && !loading && (
         <p className="hl-profile-hint">Save stories from My status → Save to highlight</p>
