@@ -189,15 +189,7 @@ function ViewOnceGroupFileCard({ payload, isMine, mediaKind, onBurnViewOnce }) {
   if (!url) return null;
 
   if (kind === 'audio') {
-    return (
-      <audio
-        src={url}
-        controls
-        autoPlay
-        className="attachment-audio"
-        onEnded={burn}
-      />
-    );
+    return <VoicePlayer url={url} autoPlay onPlayedThrough={burn} />;
   }
 
   if (kind === 'video') {

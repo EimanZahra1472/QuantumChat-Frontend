@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Play, Pause, Mic } from 'lucide-react';
+import useVoicePlaybackRate from '../hooks/useVoicePlaybackRate.js';
 
 function formatDuration(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -24,16 +25,76 @@ function generateWaveformBars(seedStr, count = 28) {
   return bars;
 }
 
-export default function VoicePlayer({ url, onPlayedThrough, isMine = false }) {
+function VoiceSpeedControl({ rate, setRate, allowedRates }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    function closeOnOutsidePointer(event) {
+      if (!containerRef.current?.contains(event.target)) setIsOpen(false);
+    }
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setIsOpen(false);
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="voice-speed-control" ref={containerRef}>
+      <button
+        type="button"
+        className="voice-speed-pill"
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen((open) => !open);
+        }}
+        aria-label="Playback speed"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+      >
+        {rate}x
+      </button>
+      {isOpen && (
+        <div className="voice-speed-menu" role="listbox" aria-label="Playback speed options">
+          {allowedRates.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="option"
+              aria-selected={option === rate}
+              className={`voice-speed-option ${option === rate ? 'selected' : ''}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setRate(option);
+                setIsOpen(false);
+              }}
+            >
+              {option}x
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function VoicePlayer({ url, onPlayedThrough, isMine = false, autoPlay = false }) {
   const audioRef = useRef(null);
   const waveTrackRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [speed, setSpeed] = useState(1);
   const burnedRef = useRef(false);
   const fixingDurationRef = useRef(false);
+  const autoPlayedRef = useRef(false);
+  const { rate, setRate, ALLOWED_RATES } = useVoicePlaybackRate();
 
   const bars = useMemo(() => generateWaveformBars(url, 24), [url]);
 
@@ -42,6 +103,10 @@ export default function VoicePlayer({ url, onPlayedThrough, isMine = false }) {
       audioRef.current?.pause();
     };
   }, [url]);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+  }, [rate]);
 
   function maybeBurn() {
     if (burnedRef.current) return;
@@ -60,6 +125,10 @@ export default function VoicePlayer({ url, onPlayedThrough, isMine = false }) {
       audio.currentTime = 0;
       if (Number.isFinite(audio.duration)) setDuration(audio.duration);
       fixingDurationRef.current = false;
+      if (autoPlay && !autoPlayedRef.current) {
+        autoPlayedRef.current = true;
+        audio.play().catch(() => {});
+      }
     };
     audio.addEventListener('timeupdate', onTimeUpdate);
   }
@@ -97,15 +166,6 @@ export default function VoicePlayer({ url, onPlayedThrough, isMine = false }) {
     }
   }
 
-  function cycleSpeed(e) {
-    e?.stopPropagation?.();
-    const nextSpeed = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
-    setSpeed(nextSpeed);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = nextSpeed;
-    }
-  }
-
   // WhatsApp-style: show duration when paused at 0, count up elapsed when active
   const displaySeconds = playing || currentTime > 0 ? currentTime : duration;
 
@@ -117,9 +177,14 @@ export default function VoicePlayer({ url, onPlayedThrough, isMine = false }) {
         preload="metadata"
         onLoadedMetadata={(e) => {
           const audio = e.currentTarget;
+          audio.playbackRate = rate;
           const d = audio.duration;
           if (Number.isFinite(d) && d > 0) {
             setDuration(d);
+            if (autoPlay && !autoPlayedRef.current) {
+              autoPlayedRef.current = true;
+              audio.play().catch(() => {});
+            }
           } else {
             fixInfiniteDuration(audio);
           }
@@ -193,14 +258,7 @@ export default function VoicePlayer({ url, onPlayedThrough, isMine = false }) {
             <span>{formatDuration(displaySeconds)}</span>
           </span>
 
-          <button
-            type="button"
-            className={`voice-speed-pill ${speed > 1 ? 'is-boosted' : ''}`}
-            onClick={cycleSpeed}
-            title="Toggle playback speed (1x, 1.5x, 2x)"
-          >
-            {speed}x
-          </button>
+          <VoiceSpeedControl rate={rate} setRate={setRate} allowedRates={ALLOWED_RATES} />
         </div>
       </div>
     </div>
