@@ -217,17 +217,15 @@ export default function StoryHistoryPanel({
           <button type="button" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        <div className="settings-tabs" style={{ padding: '0 0 12px', margin: '0 0 8px' }}>
+        <div className="story-history-tabs">
           {['active', 'archive', 'drafts'].map((t) => (
             <button
               key={t}
               type="button"
-              className={`settings-tab${tab === t ? ' active' : ''}`}
+              className={`story-history-tab${tab === t ? ' active' : ''}`}
               onClick={() => setTab(t)}
             >
-              <span className="settings-tab-label">
-                {t === 'active' ? 'Active' : t === 'archive' ? 'Archive' : 'Drafts'}
-              </span>
+              {t === 'active' ? 'Active' : t === 'archive' ? 'Archive' : 'Drafts'}
             </button>
           ))}
         </div>
