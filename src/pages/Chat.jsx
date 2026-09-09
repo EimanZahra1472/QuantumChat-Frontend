@@ -141,6 +141,7 @@ import {
   shouldNotify,
   showNotificationPopup
 } from "../utils/notificationDispatch.js";
+import { getMessagePreviewText } from "../utils/messagePreview.js";
 import { enablePushNotifications } from "../utils/pushNotifications.js";
 import {
   conversationKeyForGroup,
@@ -6571,7 +6572,7 @@ useEffect(() => {
                       >
                         <Pin size={12} />
                         <span>
-                          {m.text ||
+                          {getMessagePreviewText(m) ||
                             (m.attachment ? "Attachment" : "Pinned message")}
                         </span>
                       </button>
@@ -6718,7 +6719,9 @@ useEffect(() => {
                                       usernameById.get(
                                         String(m.replyTo.from),
                                       ) || "Message",
-                                    text: m.replyTo.text || "[encrypted]",
+                                    text:
+                                      getMessagePreviewText(m.replyTo) ||
+                                      (m.replyTo.attachment ? "[Attachment]" : "[encrypted]"),
                                   }
                                   : null
                               }
@@ -6900,8 +6903,9 @@ useEffect(() => {
                           </strong>
                           <span>
                             {editingMessage
-                              ? editingMessage.text || ""
-                              : replyTo?.text || "[encrypted message]"}
+                              ? getMessagePreviewText(editingMessage) || ""
+                              : getMessagePreviewText(replyTo) ||
+                                (replyTo?.attachment ? "[Attachment]" : "[encrypted message]")}
                           </span>
                         </div>
                         <button

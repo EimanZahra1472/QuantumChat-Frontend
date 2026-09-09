@@ -99,6 +99,12 @@ export function describeSystemPayload(obj) {
       return `Reacted ${obj.emoji || '❤️'} to your story`;
     case 'story_reply':
       return `Replied to your story: "${(obj.text || '').slice(0, 80)}"`;
+    case 'announcement':
+      return obj.body ? `📢 ${obj.body}` : 'Announcement';
+    case 'poll':
+      return obj.question ? `📊 Poll: ${obj.question}` : 'Poll';
+    case 'event':
+      return obj.title ? `📅 Event: ${obj.title}` : 'Event';
     default:
       return null;
   }

@@ -22,6 +22,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { COMPOSER_EMOJIS, QUICK_REACTIONS, isEmojiOnlyText, searchEmojis, splitEmojis } from '../utils/emojis.js';
 import { parseGroupPayload } from '../utils/groupPayload.js';
+import { getMessagePreviewText } from '../utils/messagePreview.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import GroupMessageContent from './GroupMessageContent.jsx';
@@ -565,7 +566,7 @@ function MessageBubble({
                 disabled={!onJumpToReply}
               >
                 <span className="message-reply-label">{replyPreview.label}</span>
-                <span className="message-reply-text">{replyPreview.text}</span>
+                <span className="message-reply-text">{getMessagePreviewText(replyPreview.text)}</span>
               </button>
             )}
            {(message.viewOnce && message.viewOnceOpenedAt) ||

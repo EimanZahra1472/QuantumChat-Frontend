@@ -1,4 +1,4 @@
-import { BookmarkPlus, Camera, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
+import { BookmarkPlus, Camera, ChevronRight, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
@@ -757,12 +757,26 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
               onClick={(e) => e.stopPropagation()}
             >
               <div className="status-create-handle" aria-hidden />
-              <h2 className="status-create-title">Add status</h2>
-              <p className="status-create-subtitle">Share a photo, video, voice note, or text</p>
+
+              <div className="status-create-header">
+                <div className="status-create-heading-wrap">
+                  <h2 className="status-create-title">Add status</h2>
+                  <p className="status-create-subtitle">Share a photo, video, voice note, or text</p>
+                </div>
+                <button
+                  type="button"
+                  className="status-create-close"
+                  onClick={() => setCreateSheetOpen(false)}
+                  aria-label="Close"
+                >
+                  <X size={18} aria-hidden />
+                </button>
+              </div>
+
               <div className="status-create-options">
                 <button
                   type="button"
-                  className="status-create-option"
+                  className="status-create-option media-opt"
                   onClick={() => {
                     setCreateSheetOpen(false);
                     mediaInputRef.current?.click();
@@ -775,10 +789,13 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                     <strong>Photo &amp; video</strong>
                     <small>Upload from your gallery</small>
                   </span>
+                  <span className="status-create-arrow">
+                    <ChevronRight size={16} aria-hidden />
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="status-create-option"
+                  className="status-create-option audio-opt"
                   onClick={() => {
                     setCreateSheetOpen(false);
                     audioInputRef.current?.click();
@@ -791,10 +808,13 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                     <strong>Voice note</strong>
                     <small>Share an audio status</small>
                   </span>
+                  <span className="status-create-arrow">
+                    <ChevronRight size={16} aria-hidden />
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="status-create-option"
+                  className="status-create-option text-opt"
                   onClick={() => {
                     setCreateSheetOpen(false);
                     setTextComposerOpen(true);
@@ -807,10 +827,13 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                     <strong>Text status</strong>
                     <small>Type with colors and fonts</small>
                   </span>
+                  <span className="status-create-arrow">
+                    <ChevronRight size={16} aria-hidden />
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="status-create-option"
+                  className="status-create-option drafts-opt"
                   onClick={() => {
                     setCreateSheetOpen(false);
                     setHistoryTab('active');
@@ -821,12 +844,20 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                     <FilePen size={22} aria-hidden />
                   </span>
                   <span className="status-create-copy">
-                    <strong>Story history</strong>
+                    <span className="status-create-title-row">
+                      <strong>Story history</strong>
+                      {draftCount > 0 && (
+                        <span className="status-badge-count">{draftCount} waiting</span>
+                      )}
+                    </span>
                     <small>
                       {draftCount > 0
-                        ? `${draftCount} waiting — preview, edit, or publish`
-                          : 'Active, archived, and drafts'}
+                        ? 'Preview, edit, or publish scheduled'
+                        : 'Active, archived, and drafts'}
                     </small>
+                  </span>
+                  <span className="status-create-arrow">
+                    <ChevronRight size={16} aria-hidden />
                   </span>
                 </button>
               </div>
