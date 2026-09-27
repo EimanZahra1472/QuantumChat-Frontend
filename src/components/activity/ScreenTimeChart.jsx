@@ -102,12 +102,12 @@ export default function ScreenTimeChart() {
         >
           <defs>
             <linearGradient id="stLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="var(--accent, #14b8a6)" />
-              <stop offset="100%" stopColor="var(--accent-secondary, #06b6d4)" />
+              <stop offset="0%" stopColor="var(--accent, #064e3b)" />
+              <stop offset="100%" stopColor="var(--accent-hover, #053d2e)" />
             </linearGradient>
             <linearGradient id="stAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="var(--accent, #14b8a6)" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="var(--accent, #14b8a6)" stopOpacity="0.0" />
+              <stop offset="0%" stopColor="var(--accent, #064e3b)" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="var(--accent, #064e3b)" stopOpacity="0.0" />
             </linearGradient>
           </defs>
           {(() => {

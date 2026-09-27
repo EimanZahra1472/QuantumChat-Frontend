@@ -4,13 +4,13 @@ import { unsealMessage } from '../crypto/keys.js';
 
 // Use theme design tokens so the modal responds gracefully to both light
 // and dark themes while meeting WCAG AA minimum contrast standards.
-const CARD_BG = 'var(--bg-surface, #ffffff)';
-const TEXT_PRIMARY = 'var(--text-primary, #0f172a)';
-const MUTED_COLOR = 'var(--text-secondary, #475569)';
-const TRACK_COLOR = 'var(--border-subtle, rgba(0,0,0,0.08))';
-const ACCENT = 'var(--accent, #0f766e)';
-const CURRENT_BG = 'var(--accent-muted, rgba(13, 148, 136, 0.12))';
-const CURRENT_BORDER = 'color-mix(in srgb, var(--accent, #0f766e) 35%, transparent)';
+const CARD_BG = 'var(--bg-surface, #fdf8ee)';
+const TEXT_PRIMARY = 'var(--text-primary, #1c2b23)';
+const MUTED_COLOR = 'var(--text-secondary, #4a5a4f)';
+const TRACK_COLOR = 'var(--border-subtle, #ecdfc0)';
+const ACCENT = 'var(--accent, #064e3b)';
+const CURRENT_BG = 'var(--accent-muted, rgba(6, 78, 59, 0.12))';
+const CURRENT_BORDER = 'color-mix(in srgb, var(--accent, #064e3b) 35%, transparent)';
 const EARLIER_BG = 'color-mix(in srgb, var(--text-primary, #000) 4%, transparent)';
 const CLOSE_BTN_BG = 'color-mix(in srgb, var(--text-primary, #000) 6%, transparent)';
 

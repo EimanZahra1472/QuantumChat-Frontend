@@ -222,6 +222,35 @@ function MessageBubble({
     const isLockedCapsule = Boolean(message.timeCapsule && message.locked);
   const isDecryptionFail = message.text === null && !isLockedCapsule;
 
+  const isVoiceMessage = useMemo(() => {
+    if (message.viewOnceMediaKind === 'audio') return true;
+    if (message.attachment) {
+      const mime = String(message.attachment.mimetype || '').toLowerCase();
+      const name = String(message.attachment.filename || '').toLowerCase();
+      if (
+        mime.startsWith('audio/') ||
+        /^voice-note/i.test(name) ||
+        /\.(mp3|m4a|wav|aac|ogg|oga|opus|flac)$/i.test(name) ||
+        (/\.webm$/i.test(name) && (/^voice-note/i.test(name) || mime.startsWith('audio/')))
+      ) {
+        return true;
+      }
+    }
+    if (message.group && structured?.type === 'file') {
+      const mime = String(structured.payload?.mimetype || '').toLowerCase();
+      const name = String(structured.payload?.filename || '').toLowerCase();
+      if (
+        mime.startsWith('audio/') ||
+        /^voice-note/i.test(name) ||
+        /\.(mp3|m4a|wav|aac|ogg|oga|opus|flac)$/i.test(name) ||
+        (/\.webm$/i.test(name) && (/^voice-note/i.test(name) || mime.startsWith('audio/')))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }, [message.attachment, message.group, structured, message.viewOnceMediaKind]);
+
   const callMeta = useMemo(() => {
     if (!message.text) return null;
     try {
@@ -565,7 +594,7 @@ function MessageBubble({
     </div>
   )}
           <div
-            className={`message-bubble ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''}${message.expiresAt ? ' has-expiry' : ''}${isStoryReaction ? ' story-reaction-pill' : ''}${emojiOnly ? ' emoji-only' : ''}${textDir ? ` is-${textDir}` : ''}`}
+            className={`message-bubble ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''}${isVoiceMessage ? ' is-voice' : ''}${message.expiresAt ? ' has-expiry' : ''}${isStoryReaction ? ' story-reaction-pill' : ''}${emojiOnly ? ' emoji-only' : ''}${textDir ? ` is-${textDir}` : ''}`}
             dir={textDir}
           >
             {senderLabel && !isMine && !grouped && (
