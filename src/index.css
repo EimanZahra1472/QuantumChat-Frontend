@@ -8566,6 +8566,16 @@ body.theme-light .story-viewer-top button {
   border: 1px solid #e2e8f0;
 }
 
+.story-viewer-top button:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+  transform: scale(1.04);
+}
+.story-viewer-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 [data-theme='light'] .story-viewer-top button:hover,
 body.theme-light .story-viewer-top button:hover {
   background: #e2e8f0;
