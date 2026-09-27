@@ -99,7 +99,7 @@ export default function Activity() {
             <div className="card activity-feed-card">
               <div className="activity-feed-head">
                 <h3>
-                  <Sparkles size={16} style={{ color: 'var(--accent, #14b8a6)' }} />
+                  <Sparkles size={16} style={{ color: 'var(--accent)' }} />
                   <span>Recent activity</span>
                 </h3>
                 <span className="feed-count-badge">

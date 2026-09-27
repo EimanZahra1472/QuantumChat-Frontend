@@ -64,7 +64,7 @@
 
 .notif-perm-btn.primary {
   background: var(--accent-solid, var(--accent));
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .notif-perm-btn.primary:disabled {
