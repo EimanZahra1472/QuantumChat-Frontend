@@ -3051,6 +3051,48 @@ useEffect(() => {
     [user?.id, selfPeer, users],
   );
 
+  const ensurePeerKeys = useCallback(
+    async (targetConversation) => {
+      if (!targetConversation || targetConversation.type === "group") return [];
+      let peer = resolveDmPeer(targetConversation);
+      let keys = (peer?.publicKeys || []).filter(Boolean);
+      if (keys.length > 0) return keys;
+
+      const peerId = targetConversation.id;
+      if (!peerId || String(peerId) === String(user?.id)) return [];
+
+      try {
+        const { data } = await client.get(`/users/${peerId}`);
+        const freshUser = data?.data;
+        if (freshUser) {
+          const freshKeys = (freshUser.publicKeys || []).filter(Boolean);
+          setUsers((prev) => {
+            const idx = prev.findIndex((u) => String(u.id) === String(peerId));
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], ...freshUser };
+              return copy;
+            }
+            return [...prev, freshUser];
+          });
+          setSelected((cur) => {
+            if (!cur || cur.type !== "dm" || String(cur.id) !== String(peerId)) return cur;
+            return {
+              ...cur,
+              title: cur.title === "Chat" ? (getDisplayName(freshUser, i18n.language) || freshUser.username || "Chat") : cur.title,
+              peer: { ...(cur.peer || {}), ...freshUser },
+            };
+          });
+          return freshKeys;
+        }
+      } catch (err) {
+        console.warn("[ensurePeerKeys] failed to fetch public keys for peer", peerId, err);
+      }
+      return [];
+    },
+    [resolveDmPeer, user?.id, i18n.language],
+  );
+
   const screenshotProtectionOn = useMemo(
     () =>
       shouldEnforceScreenshotProtection({
@@ -3378,6 +3420,9 @@ useEffect(() => {
     if (syncUrl) {
       const next = chatPathForSelection(c);
       if (location.pathname !== next) navigate(next);
+    }
+    if (c.type === "dm" && !c.isSelfChat && (!c.peer?.publicKeys?.length || c.title === "Chat")) {
+      ensurePeerKeys(c).catch(() => {});
     }
   }
 
@@ -4408,9 +4453,11 @@ useEffect(() => {
             ),
           );
         } else {
-          const peer = resolveDmPeer(selected);
           const myKey = pickRandom(getCurrentKeySet(user.id));
-          const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+          let recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+          if (recipientKeys.length === 0 && selected) {
+            recipientKeys = await ensurePeerKeys(selected);
+          }
           if (!myKey?.publicKey || recipientKeys.length === 0) {
             showToast("Missing encryption keys for this conversation", "error");
             return;
@@ -4534,9 +4581,11 @@ useEffect(() => {
           throw err;
         }
       } else {
-        const peer = resolveDmPeer(selected);
         const myKey = pickRandom(getCurrentKeySet(user.id));
-        const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+        let recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+        if (recipientKeys.length === 0 && selected) {
+          recipientKeys = await ensurePeerKeys(selected);
+        }
         if (!myKey?.publicKey || recipientKeys.length === 0) {
           showToast("Missing encryption keys for this conversation", "error");
           return;
@@ -4801,9 +4850,11 @@ useEffect(() => {
         return;
       }
 
-      const peer = resolveDmPeer(selected);
       const myKey = pickRandom(getCurrentKeySet(user.id));
-      const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+      let recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+      if (recipientKeys.length === 0 && selected) {
+        recipientKeys = await ensurePeerKeys(selected);
+      }
       if (!myKey?.publicKey || recipientKeys.length === 0) {
         showToast("Missing encryption keys for this conversation", "error");
         return;
@@ -5561,9 +5612,11 @@ useEffect(() => {
         }
       }
 
-      const peer = resolveDmPeer(target);
       const myKey = pickRandom(getCurrentKeySet(user.id));
-      const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+      let recipientKeys = (resolveDmPeer(target)?.publicKeys || []).filter(Boolean);
+      if (recipientKeys.length === 0 && target) {
+        recipientKeys = await ensurePeerKeys(target);
+      }
       if (!myKey?.publicKey || recipientKeys.length === 0) {
         showToast("Missing encryption keys for this conversation", "error");
         return;
@@ -5682,8 +5735,10 @@ useEffect(() => {
         );
         recipientKeys = (member?.publicKeys || []).filter(Boolean);
       } else {
-        const peer = resolveDmPeer(selected);
-        recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+        recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+        if (recipientKeys.length === 0 && selected) {
+          recipientKeys = await ensurePeerKeys(selected);
+        }
       }
       if (!myKey?.publicKey || recipientKeys.length === 0) {
         showToast("Missing encryption keys for this conversation", "error");

@@ -1,4 +1,4 @@
-import { BookmarkPlus, Camera, ChevronRight, Eye, FilePen, ImagePlus, Mic, Paperclip, Pencil, Send, Smile, Square, Type, X } from 'lucide-react';
+import { BookmarkPlus, Camera, ChevronRight, Eye, FilePen, Forward, ImagePlus, Mic, Paperclip, Pencil, Repeat2, Send, Share2, Smile, Square, Type, X } from 'lucide-react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
@@ -238,6 +238,25 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
   useEffect(() => {
     loadStories().catch(() => { });
     loadDraftsCount().catch(() => { });
+
+    // Handle shared story links: e.g. /chat?story=:storyId
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sharedStoryId = params.get('story');
+      if (sharedStoryId) {
+        client.get(`/stories/${sharedStoryId}`).then(({ data }) => {
+          const s = data.data;
+          if (s) {
+            setUnavailable(false);
+            setViewer({ group: { user: s.user, items: [s] }, index: 0 });
+          }
+        }).catch(() => {
+          setUnavailable(true);
+        });
+      }
+    } catch {
+      // ignore URLSearchParams errors
+    }
   }, []);
 
   useEffect(() => {
@@ -736,6 +755,13 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           users={users}
           onError={onError}
           onClose={() => setViewer(null)}
+          onReshareStory={(file) => {
+            setViewer(null);
+            if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+            setPendingQueue([file]);
+            setPendingIndex(0);
+            setPendingPreviewUrl(URL.createObjectURL(file));
+          }}
           onDeleted={async () => {
             setViewer(null);
             await loadStories();
@@ -995,8 +1021,9 @@ function StoryViewersSheet({ viewerCount, viewers, viewersHidden, viewersHiddenR
   );
 }
 
-function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, onDeleted, onError }) {
+function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, onDeleted, onError, onReshareStory }) {
   const { showToast } = useToast();
+  const [resharing, setResharing] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [viewers, setViewers] = useState([]);
   const [viewersHidden, setViewersHidden] = useState(false);
@@ -1667,6 +1694,80 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
     };
   }, []);
 
+  async function handleReshareStory() {
+    if (resharing) return;
+    if (!mediaBlob && !mediaUrl) {
+      showToast('Status media is still loading...', 'info');
+      return;
+    }
+    try {
+      setResharing(true);
+      let file;
+      const ext =
+        story.mediaType === 'video'
+          ? 'mp4'
+          : story.mediaType === 'audio'
+            ? 'webm'
+            : 'jpg';
+      const defaultMime =
+        story.mediaType === 'video'
+          ? 'video/mp4'
+          : story.mediaType === 'audio'
+            ? 'audio/webm'
+            : 'image/jpeg';
+
+      if (mediaBlob) {
+        file = new File([mediaBlob], `reshare-${story.id}.${ext}`, {
+          type: mediaBlob.type || defaultMime,
+        });
+      } else {
+        const resp = await fetch(mediaUrl);
+        const b = await resp.blob();
+        file = new File([b], `reshare-${story.id}.${ext}`, {
+          type: b.type || defaultMime,
+        });
+      }
+
+      onClose();
+      onReshareStory?.(file);
+    } catch (err) {
+      showToast(err?.message || 'Failed to prepare story for reshare', 'error');
+    } finally {
+      setResharing(false);
+    }
+  }
+
+  async function handleShareStory() {
+    try {
+      const shareUrl = `${window.location.origin}/chat?story=${story.id}`;
+      const shareTitle = `${group.user?.username || 'User'}'s story on QuantumChat`;
+      const shareText = story.caption ? `Check out this story: "${story.caption}"` : `Check out this story on QuantumChat!`;
+
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        try {
+          await navigator.share({
+            title: shareTitle,
+            text: shareText,
+            url: shareUrl,
+          });
+          showToast('Story shared!', 'success');
+          return;
+        } catch (err) {
+          if (err?.name === 'AbortError') return; // User dismissed native share sheet
+        }
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('Story link copied to clipboard!', 'success');
+      } else {
+        showToast(shareUrl, 'info', 4000);
+      }
+    } catch {
+      showToast('Could not copy story link', 'error');
+    }
+  }
+
   return createPortal(
     <div className="story-viewer-overlay" onClick={onClose}>
       <div className="story-viewer" onClick={(e) => e.stopPropagation()}>
@@ -1687,9 +1788,34 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
             </div>
             {story.sealed ? <span className="story-sealed-badge">Sealed X5</span> : null}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close">
-            <X size={18} strokeWidth={2.4} aria-hidden />
-          </button>
+          <div className="story-viewer-top-actions">
+            {!isOwn && (
+              <>
+                <button
+                  type="button"
+                  className="story-viewer-share-btn"
+                  onClick={handleReshareStory}
+                  disabled={resharing}
+                  aria-label="Reshare to your status"
+                  title="Reshare to your status"
+                >
+                  <Repeat2 size={17} strokeWidth={2.2} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="story-viewer-share-btn"
+                  onClick={handleShareStory}
+                  aria-label="Share story link"
+                  title="Share story link"
+                >
+                  <Share2 size={17} strokeWidth={2.2} aria-hidden />
+                </button>
+              </>
+            )}
+            <button type="button" onClick={onClose} aria-label="Close" title="Close">
+              <X size={18} strokeWidth={2.4} aria-hidden />
+            </button>
+          </div>
         </div>
         <div className="story-viewer-progress">
           {group.items.map((s, i) => (
@@ -1884,6 +2010,28 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
                 }}
               >
                 {gifPickerOpen ? <X size={17} strokeWidth={2.2} /> : 'GIF'}
+              </button>
+
+              <button
+                type="button"
+                className="story-icon-btn"
+                aria-label="Reshare to your status"
+                title="Reshare to your status"
+                onClick={handleReshareStory}
+                disabled={resharing || sendingReply || replyRecording}
+              >
+                <Repeat2 size={17} strokeWidth={2.2} />
+              </button>
+
+              <button
+                type="button"
+                className="story-icon-btn"
+                aria-label="Share story"
+                title="Share story"
+                onClick={handleShareStory}
+                disabled={sendingReply || replyRecording}
+              >
+                <Share2 size={17} strokeWidth={2.2} />
               </button>
             </div>
 
