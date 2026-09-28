@@ -634,6 +634,15 @@ function MessageBubble({
                 ⏳ Time capsule{message.unlocksAt ? ` · unlocks ${new Date(message.unlocksAt).toLocaleString()}` : ''}
               </div>
             )}
+            {message.kind === 'story_mention' && message.storyRef && (
+              <button
+                type="button"
+                className="message-forwarded-label story-mention-view-btn"
+                onClick={() => onOpenStory?.(message.storyRef)}
+              >
+                🏷️ Tagged you in their story — View Story
+              </button>
+            )}
             {replyPreview && (
               <button
                 type="button"
