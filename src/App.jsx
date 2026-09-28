@@ -1,4 +1,4 @@
-﻿import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { VaultProvider } from './context/VaultContext.jsx';
 import { NotificationSettingsProvider } from './context/NotificationSettingsContext.jsx';

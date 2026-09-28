@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Birthday data calculation and normalization utilities for QuantumChat.
  * Respects strict privacy (only processes visible friend birthday fields)
  * and normalizes annual recurring dates across years, timezones, and leap days.
