@@ -3,17 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Languages, Search } from 'lucide-react';
 import client, { getMyReferrals, unmuteChat, updatePrivacySettings } from '../api/client.js';
-import { useAuth } from '../context/AuthContext.jsx';
-import { useNotificationSettings } from '../context/NotificationSettingsContext.jsx';
-import { APP_ICONS, FUN_THEMES, useTheme } from '../context/ThemeContext.jsx';
-import { getCurrentKeySet, getSessionId } from '../crypto/keyStorage.js';
-import { decryptVaultPayload, encryptVaultPayload } from '../crypto/keyVault.js';
-import { SUPPORTED_LANGUAGES, setAppLanguage } from '../i18n/index.js';
-import ThemeSwitcher, { FunThemeSwitcher } from './ThemeSwitcher.jsx';
-import PrivacySelect from './ui/PrivacySelect.jsx';
-import UserAvatar, { bustAvatarCache } from './UserAvatar.jsx';
-import DeviceLinkRequestModal from './DeviceLinkRequestModal.jsx';
-import DeviceLinkSetupModal from './DeviceLinkSetupModal.jsx';
 
 import {
   approveDeviceLink,
