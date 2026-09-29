@@ -55,7 +55,8 @@
     "groups": "Groups",
     "allChats": "All Chats",
     "searchChats": "Search chats…",
-    "noConversations": "No conversations found"
+    "noConversations": "No conversations found",
+    "birthdays": "Birthday Calendar"
   },
   "settings": {
     "title": "Settings",

@@ -1,7 +1,9 @@
 import QRCode from 'qrcode';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Languages, Search } from 'lucide-react';
 import client, { getMyReferrals, unmuteChat, updatePrivacySettings } from '../api/client.js';
+
 import {
   approveDeviceLink,
   buildQrPayload,
@@ -120,6 +122,46 @@ export default function SettingsModal({
   const keyInputRef = useRef(null);
   const avatarInputRef = useRef(null);
   const [tab, setTab] = useState(initialTab);
+  const [searchQuery, setSearchQuery] = useState('');
+ 
+
+ 
+  
+  const bodyRef = useRef(null);
+
+  useEffect(() => {
+    const container = bodyRef.current;
+    if (!container) return;
+    
+    const query = searchQuery.trim().toLowerCase();
+    
+    const blocks = container.querySelectorAll('.settings-section > div, .settings-section > button, .settings-section > ul');
+    
+    blocks.forEach(block => {
+      block.style.display = '';
+      const items = block.querySelectorAll('.settings-field, .settings-row, .settings-skin-card, .privacy-friend-item, .settings-lang-card, li');
+      items.forEach(item => item.style.display = '');
+
+      if (!query) return;
+
+      if (!block.textContent.toLowerCase().includes(query)) {
+        block.style.display = 'none';
+        return;
+      }
+
+      const title = block.querySelector('.settings-section-title, h3, h4, strong');
+      if (title && title.textContent.toLowerCase().includes(query)) {
+        return; 
+      }
+
+      items.forEach(item => {
+        if (!item.textContent.toLowerCase().includes(query)) {
+          item.style.display = 'none';
+        }
+      });
+    });
+  }, [searchQuery, tab]);  
+
   const [activeLang, setActiveLang] = useState(() => user?.preferredLanguage || i18n.language || 'en');
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1012,6 +1054,25 @@ export default function SettingsModal({
           </button>
         </div>
 
+       {/* Added Search Box */}
+        <div className="settings-search-bar" style={{ padding: '0 24px 12px 24px', position: 'relative' }}>
+          <Search size={16} style={{ position: 'absolute', left: 36, top: 10, color: 'var(--text-muted)' }} />
+          <input 
+            type="text" 
+            placeholder="Search settings..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ 
+              width: '100%', 
+              padding: '8px 12px 8px 36px', 
+              borderRadius: '8px',
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--bg-elevated)',
+              color: 'var(--text-primary)'
+            }}
+          />
+        </div>
+
         <nav className="settings-tabs settings-nav" aria-label="Settings sections">
           {[
             {
@@ -1094,6 +1155,8 @@ export default function SettingsModal({
               aria-current={tab === tItem.id ? 'page' : undefined}
               onClick={() => {
                 setTab(tItem.id);
+                setSearchQuery(''); // clear search if they click a tab manually
+
                 setError('');
                 setOk('');
               }}
@@ -1104,8 +1167,7 @@ export default function SettingsModal({
           ))}
         </nav>
 
-        <div className="settings-body">
-          {error && <div className="auth-error">{error}</div>}
+        <div className="settings-body" ref={bodyRef}>
           {ok && <div className="settings-ok">{ok}</div>}
           {verifyLinkUrl && (
             <div className="settings-ok">
@@ -1114,7 +1176,7 @@ export default function SettingsModal({
               </a>
             </div>
           )}
-          {tab === 'profile' && (
+          {(tab === 'profile' || searchQuery) && (
             <section className="settings-section">
               {/* Identity & Avatar Card */}
               <div className="settings-identity">
@@ -1482,7 +1544,7 @@ export default function SettingsModal({
             </section>
           )}
 
-          {tab === 'privacy' && (
+          {(tab === 'privacy' || searchQuery) && (
             <section className="settings-section">
               <div className="settings-fieldset">
                 <h3 className="settings-section-title">
@@ -1830,7 +1892,7 @@ export default function SettingsModal({
               </div>
             </section>
           )}
-          {tab === 'notifications' && (
+          {(tab === 'notifications' || searchQuery) && (
             <section className="settings-section">
               {/* Group 1: Message & Activity Alerts */}
               <div className="settings-fieldset">
@@ -2289,7 +2351,7 @@ export default function SettingsModal({
               </div>
             </section>
           )}
-          {tab === 'security' && (
+          {(tab === 'security' || searchQuery) && (
             <section className="settings-section">
               {/* Group 1: Authentication & Two-Factor (2FA) */}
               <div className="settings-fieldset">
@@ -2687,7 +2749,7 @@ export default function SettingsModal({
             </section>
           )}
 
-          {tab === 'blocked' && (
+          {(tab === 'blocked' || searchQuery) && (
             <section className="settings-section">
               <div className="settings-fieldset">
                 <div className="settings-shield-header">
@@ -2772,7 +2834,7 @@ export default function SettingsModal({
             </section>
           )}
 
-          {tab === 'data' && (
+          {(tab === 'data' || searchQuery) && (
             <section className="settings-section">
               {/* Group 1: Data Portability & Exports */}
               <div className="settings-fieldset">
