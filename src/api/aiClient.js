@@ -2,21 +2,28 @@ import { getToken } from '../crypto/keyStorage.js';
 
 /**
  * QuantumAI API base URL.
- * - Dev: same-origin `/quantum-ai` (Vite proxy) so CORP/CORS cannot block local Chat.
- * - Production: VITE_AI_API_URL or https://ai.quantumlogicslimited.com/api/v1
- * Never fall back to localhost in production builds (CSP blocks it).
+ *
+ * Prefer same-origin `/quantum-ai` always:
+ * - Dev: Vite proxies to the AI host (vite.config.js)
+ * - Prod: Vercel rewrites `/quantum-ai` → AI API (vercel.json)
+ *
+ * Why: the AI host still ships Helmet CORP `same-origin`, which makes the
+ * browser discard cross-origin responses even when CORS Allow-Origin is set.
+ * Same-origin proxy avoids that entirely.
+ *
+ * Overrides:
+ * - VITE_AI_API_URL=http://localhost:5001/api/v1 → local AI server
+ * - VITE_AI_FORCE_DIRECT=true + remote VITE_AI_API_URL → call AI host directly
+ *   (only after AI CORP is cross-origin)
  */
 function resolveAiApiBase() {
   const fromEnv = String(import.meta.env.VITE_AI_API_URL || '').trim().replace(/\/$/, '');
-  if (import.meta.env.DEV) {
-    // Prefer explicit env; otherwise use the Vite proxy (see vite.config.js).
-    if (fromEnv) return fromEnv;
-    return '/quantum-ai';
-  }
-  if (fromEnv && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\b/i.test(fromEnv)) {
-    return fromEnv;
-  }
-  return 'https://ai.quantumlogicslimited.com/api/v1';
+  const forceDirect = String(import.meta.env.VITE_AI_FORCE_DIRECT || '').toLowerCase() === 'true';
+  const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\b/i.test(fromEnv);
+
+  if (fromEnv && isLocalhost) return fromEnv;
+  if (fromEnv && forceDirect && !isLocalhost) return fromEnv;
+  return '/quantum-ai';
 }
 
 const AI_API_BASE = resolveAiApiBase();
