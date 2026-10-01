@@ -2,13 +2,16 @@ import { getToken } from '../crypto/keyStorage.js';
 
 /**
  * QuantumAI API base URL.
- * Dev defaults to local AI backend; production must never fall back to localhost
- * (CSP on chat.quantumlogicslimited.com blocks http://localhost:5001).
+ * - Dev: same-origin `/quantum-ai` (Vite proxy) so CORP/CORS cannot block local Chat.
+ * - Production: VITE_AI_API_URL or https://ai.quantumlogicslimited.com/api/v1
+ * Never fall back to localhost in production builds (CSP blocks it).
  */
 function resolveAiApiBase() {
   const fromEnv = String(import.meta.env.VITE_AI_API_URL || '').trim().replace(/\/$/, '');
   if (import.meta.env.DEV) {
-    return fromEnv || 'http://localhost:5001/api/v1';
+    // Prefer explicit env; otherwise use the Vite proxy (see vite.config.js).
+    if (fromEnv) return fromEnv;
+    return '/quantum-ai';
   }
   if (fromEnv && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\b/i.test(fromEnv)) {
     return fromEnv;
@@ -28,7 +31,7 @@ function headers(json = false) {
 
 async function jsonRequest(path) {
   const response = await fetch(`${AI_API_BASE}${path}`, { headers: headers() });
-  const body = await response.json();
+  const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `QuantumAI request failed (${response.status})`);
   return body.data;
 }
@@ -48,6 +51,13 @@ export async function getLatestQuantumAIThread() {
       quantumAI: true,
     })),
   };
+}
+
+export function getQuantumAiHealthUrl() {
+  if (AI_API_BASE.startsWith('/')) {
+    return `${AI_API_BASE}/health`;
+  }
+  return `${AI_API_BASE}/health`;
 }
 
 export async function streamQuantumAI({
@@ -79,14 +89,14 @@ export async function streamQuantumAI({
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     throw new Error(
-      'Cannot reach QuantumAI — the AI server may be down, or the browser blocked the response (CORS/CORP). Check https://ai.quantumlogicslimited.com/api/v1/health',
+      `Cannot reach QuantumAI (${AI_API_BASE}). Is the AI server running? Health: ${getQuantumAiHealthUrl()}`,
     );
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) {
       throw new Error(
-        'QuantumAI login failed — JWT_SECRET on the AI server must match QuantumChat (re-login after fixing)',
+        'QuantumAI rejected your login token — set the same JWT_SECRET on QuantumChat backend and Quantum-AI-Backend, then log out and log in again',
       );
     }
     if (response.status === 429) {
@@ -95,10 +105,11 @@ export async function streamQuantumAI({
     if (response.status >= 500) {
       throw new Error(
         body.error ||
-          'QuantumAI server error — check GROQ_API_KEY and AI backend logs',
+          body.message ||
+          'QuantumAI server error — check GROQ_API_KEY on the AI backend',
       );
     }
-    throw new Error(body.error || `QuantumAI request failed (${response.status})`);
+    throw new Error(body.error || body.message || `QuantumAI request failed (${response.status})`);
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error('QuantumAI stream is unavailable');
@@ -114,7 +125,12 @@ export async function streamQuantumAI({
       const event = block.match(/^event:\s*(.+)$/m)?.[1];
       const raw = block.match(/^data:\s*(.+)$/m)?.[1];
       if (!raw) continue;
-      const data = JSON.parse(raw);
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        continue;
+      }
       if (event === 'start') onStart?.(data.conversationId);
       if (event === 'chunk') onChunk?.(data.content || '');
       if (event === 'done') onDone?.(data);
