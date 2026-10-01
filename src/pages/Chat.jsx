@@ -6248,14 +6248,13 @@ useEffect(() => {
     if (themeCatalog && chatTheme.bubbleColorId && chatTheme.bubbleColorId !== 'default') {
       const bubble = themeCatalog.bubbleColors.find((b) => b.id === chatTheme.bubbleColorId);
       if (bubble) {
-        vars['--bubble-mine'] = bubble.mine;
-        // `fg` is optional on older catalog responses — falls back to the
-        // app theme's default (white in dark/eyecare, dark text in light)
-        // via the CSS `var(--bubble-mine-fg, ...)` fallback if omitted.
-        if (bubble.fg) {
-          vars['--bubble-mine-fg'] = bubble.fg;
-          vars['--bubble-mine-time'] = `color-mix(in srgb, ${bubble.fg} 78%, transparent)`;
-        }
+        // Must match `.message-bubble.mine` which reads `--bubble-mine-bg`
+        // (not `--bubble-mine`). Setting only fg left the cream dark-theme
+        // default background with white text — unreadable.
+        vars['--bubble-mine-bg'] = bubble.mine;
+        const fg = bubble.fg || '#ffffff';
+        vars['--bubble-mine-fg'] = fg;
+        vars['--bubble-mine-time'] = `color-mix(in srgb, ${fg} 78%, transparent)`;
       }
     }
     if (chatTheme.wallpaperId === 'custom' && customWallpaperUrl) {

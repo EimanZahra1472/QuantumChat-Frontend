@@ -783,6 +783,7 @@ body.theme-eyecare {
   --bubble-theirs-bg: #2a251c;
   --bubble-theirs-fg: #f0e9dc;
   --bubble-theirs-border: rgba(245, 158, 11, 0.22);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #1a140c;
   --bubble-mine-time: rgba(26, 20, 12, 0.72);
   --info-panel-bg: rgba(30, 27, 21, 0.96);
@@ -13445,6 +13446,7 @@ body.theme-moonveil {
   --bubble-theirs-bg: #2a2750;
   --bubble-theirs-fg: #f3efff;
   --bubble-theirs-border: rgba(196, 181, 253, 0.28);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.8);
   --info-panel-bg: rgba(28, 26, 58, 0.96);
@@ -13531,6 +13533,7 @@ body.theme-sakura {
   --bubble-theirs-bg: #ffd6e0;
   --bubble-theirs-fg: #3b1524;
   --bubble-theirs-border: rgba(190, 24, 93, 0.22);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.82);
   --info-panel-bg: rgba(255, 248, 249, 0.96);
@@ -13608,6 +13611,7 @@ body.theme-sunset {
   --bubble-theirs-bg: #3a2226;
   --bubble-theirs-fg: #fff5ea;
   --bubble-theirs-border: rgba(255, 216, 138, 0.24);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.82);
   --info-panel-bg: rgba(36, 20, 26, 0.96);
@@ -13694,6 +13698,7 @@ body.theme-aurora {
   --bubble-theirs-bg: #123342;
   --bubble-theirs-fg: #e8fffb;
   --bubble-theirs-border: rgba(45, 212, 191, 0.28);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.82);
   --info-panel-bg: rgba(8, 23, 34, 0.96);
@@ -13776,6 +13781,7 @@ body.theme-ocean {
   --bubble-theirs-bg: #0a3532;
   --bubble-theirs-fg: #e0fffb;
   --bubble-theirs-border: rgba(34, 211, 238, 0.28);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.82);
   --info-panel-bg: rgba(3, 25, 23, 0.96);
@@ -13862,6 +13868,7 @@ body.theme-nebula {
   --bubble-theirs-bg: #241448;
   --bubble-theirs-fg: #f5ecff;
   --bubble-theirs-border: rgba(217, 70, 239, 0.28);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.82);
   --info-panel-bg: rgba(18, 10, 36, 0.96);
@@ -15178,6 +15185,7 @@ body.theme-dreamcloud {
   --bubble-theirs-bg: #f3d4ee;
   --bubble-theirs-fg: #3d2040;
   --bubble-theirs-border: rgba(190, 24, 172, 0.2);
+  --bubble-mine-bg: var(--accent-gradient);
   --bubble-mine-fg: #ffffff;
   --bubble-mine-time: rgba(255, 255, 255, 0.82);
   --info-panel-bg: rgba(255, 247, 253, 0.96);
