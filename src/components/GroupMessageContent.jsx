@@ -30,6 +30,7 @@ function MentionText({ text }) {
 function mediaKindFromPayload(payload) {
   const mime = String(payload?.mimetype || '').toLowerCase();
   const name = String(payload?.filename || '').toLowerCase();
+  if (mime.startsWith('video/')) return 'video';
   if (
     mime.startsWith('audio/') ||
     /^voice-note/i.test(name) ||
