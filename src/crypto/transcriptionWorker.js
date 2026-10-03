@@ -1,5 +1,6 @@
 const WHISPER_MODEL = 'Xenova/whisper-tiny';
 const WHISPER_MODEL_REVISION = '5332fcc35e32a33b86612b9a57a89be7906102b1';
+const WHISPER_SAMPLE_RATE = 16_000;
 
 let pipelineInstance = null;
 
@@ -17,17 +18,20 @@ async function ensurePipeline() {
 }
 
 self.onmessage = async (event) => {
-  const { id, type, blob } = event.data || {};
+  const { id, type, audio, samplingRate } = event.data || {};
   try {
     if (type !== 'transcribeAudio') {
       throw new Error(`Unknown transcription task: ${String(type)}`);
     }
-    if (!(blob instanceof Blob)) {
-      throw new Error('Missing audio blob for transcription');
+    if (!(audio instanceof Float32Array)) {
+      throw new TypeError('Expected decoded Float32 PCM audio');
+    }
+    if (samplingRate !== WHISPER_SAMPLE_RATE) {
+      throw new Error(`Whisper audio must be sampled at ${WHISPER_SAMPLE_RATE} Hz`);
     }
 
     const transcriber = await ensurePipeline();
-    const result = await transcriber(blob, {
+    const result = await transcriber(audio, {
       chunk_length_s: 30,
       stride_length_s: 5,
       return_timestamps: false,

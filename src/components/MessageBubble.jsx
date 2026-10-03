@@ -162,6 +162,7 @@ function MessageBubble({
   onOpenStory,
   onVotePoll,
   onBurnViewOnce,
+  onTranscriptStateChange,
   onShowInfo,
   onShowEditHistory,
   onImportant,
@@ -658,6 +659,8 @@ function MessageBubble({
   (message.attachment && structured.type !== 'file' && !isStoryReply) ? (
                <AttachmentBubble
                 attachment={message.attachment}
+                message={message}
+                currentUserId={currentUserId}
                 isMine={isMine}
                 resolveSecretKey={keyResolver}
                 onImagePreview={onImagePreview}
@@ -670,6 +673,7 @@ function MessageBubble({
                 onBurnViewOnce={
                   onBurnViewOnce ? () => onBurnViewOnce(message) : undefined
                 }
+                onTranscriptStateChange={onTranscriptStateChange}
               />
             ) : null}
             {callMeta ? (
@@ -714,6 +718,7 @@ function MessageBubble({
                 onBurnViewOnce={
                   onBurnViewOnce ? () => onBurnViewOnce(message) : undefined
                 }
+                onTranscriptStateChange={onTranscriptStateChange}
               />
             ) : isStoryReaction ? (
               <button
@@ -770,10 +775,13 @@ function MessageBubble({
                   message.attachment ? (
                     <AttachmentBubble
                       attachment={message.attachment}
+                      message={message}
+                      currentUserId={currentUserId}
                       isMine={isMine}
                       resolveSecretKey={keyResolver}
                       onImagePreview={onImagePreview}
                       onImageReady={onImageReady}
+                      onTranscriptStateChange={onTranscriptStateChange}
                     />
                   ) : (
                     <em dir="auto">[Attachment missing]</em>

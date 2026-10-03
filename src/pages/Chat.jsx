@@ -5794,6 +5794,27 @@ useEffect(() => {
     showToast("Message removed for you", "success");
   }
 
+  const handleTranscriptStateChange = useCallback((messageId, participantTranscript) => {
+    const id = String(messageId);
+    setMessages((prev) => prev.map((msg) => {
+      const candidateId = String(msg.id || msg._id || '');
+      if (!candidateId || candidateId !== id) return msg;
+      const current = msg.transcription || {};
+      const entries = Array.isArray(current.entries) ? current.entries : [];
+      const userId = String(participantTranscript.user || user.id);
+      const nextEntries = entries.filter((entry) => String(entry.user) !== userId);
+      nextEntries.push({ ...participantTranscript, user: userId });
+      return {
+        ...msg,
+        transcription: {
+          ...current,
+          entries: nextEntries,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    }));
+  }, [setMessages, user.id]);
+
   async function handleBurnViewOnce(message) {
     const messageId = message?.id || message?._id;
     if (!messageId) return;
@@ -7308,6 +7329,7 @@ useEffect(() => {
                               onVotePoll={
                                 isGroupChat ? handleVotePoll : undefined
                               }
+                              onTranscriptStateChange={handleTranscriptStateChange}
                               onJumpToReply={handleJumpToReply}
                               onImagePreview={handleImagePreview}
                               onImageReady={handleImageReady}

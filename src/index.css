@@ -19025,6 +19025,96 @@ body.theme-light .settings-field select option {
   border-color: var(--accent);
   box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
+.voice-attachment-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.transcript-action-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle, #94a3b8) 44%, transparent);
+}
+.transcript-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.transcript-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.transcript-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.transcript-inline-btn,
+.transcript-inline-primary {
+  border: 1px solid color-mix(in srgb, var(--border-subtle, #94a3b8) 60%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+}
+.transcript-inline-btn {
+  padding: 4px 8px;
+}
+.transcript-inline-primary {
+  width: fit-content;
+  padding: 6px 10px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-inverse);
+}
+.transcript-inline-btn:hover,
+.transcript-inline-primary:hover {
+  transform: translateY(-1px);
+}
+.transcript-inline-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+.transcript-inline-text {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-surface-alt, #f8fafc) 80%, transparent);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.transcript-inline-status,
+.transcript-inline-error {
+  font-size: 0.73rem;
+  line-height: 1.35;
+}
+.transcript-inline-status {
+  color: var(--text-secondary);
+}
+.transcript-inline-error {
+  color: #dc2626;
+}
 [dir="rtl"] .voice-player-modern,
 .message-bubble[dir="rtl"] .voice-player-modern,
 .message-bubble.is-rtl .voice-player-modern {
