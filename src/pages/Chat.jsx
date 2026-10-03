@@ -5,6 +5,7 @@ import {
   Bookmark,
   HelpCircle,
   Info,
+  LayoutDashboard,
   MessageSquare,
   Mic,
   Phone,
@@ -21,9 +22,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { getDisplayName } from "../utils/getDisplayName.js";
 import { streamQuantumAI } from "../api/aiClient.js";
-import { fetchChatTheme, fetchThemeCatalog, fetchWallpaperImageUrl } from '../api/chatThemes.js';
+import { fetchChatTheme, fetchGroupChatTheme, fetchGroupWallpaperImageUrl, fetchThemeCatalog, fetchWallpaperImageUrl } from '../api/chatThemes.js';
 import client, { muteChat, unmuteChat } from "../api/client.js";
 import { postPresenceHeartbeat } from "../api/presence.js";
 import { connectSocket, getSocket } from "../api/socket.js";
@@ -51,12 +51,14 @@ import EditHistoryModal from "../components/EditHistoryModal.jsx";
 import EmojiPicker from "../components/EmojiPicker.jsx";
 import ForwardModal from "../components/ForwardModal.jsx";
 import GroupSettingsModal from "../components/GroupSettingsModal.jsx";
+import GroupCommandCenter from "../components/GroupCommandCenter.jsx";
 import ImageLightbox from "../components/ImageLightbox.jsx";
 import MeetingOverlay from "../components/MeetingOverlay.jsx";
 import MessageInfoModal from "../components/MessageInfoModal.jsx";
 import MessageSearch from "../components/MessageSearch.jsx";
 import SettingsModal from "../components/SettingsModal.jsx";
 import StarredMessagesModal from "../components/StarredMessagesModal.jsx";
+import TimeCapsuleModal from "../components/TimeCapsuleModal.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import TypingIndicator from "../components/TypingIndicator.jsx";
 import BottomSheet from "../components/ui/BottomSheet.jsx";
@@ -67,6 +69,7 @@ import VaultUnlockModal from "../components/VaultUnlockModal.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNotificationSettings } from "../context/NotificationSettingsContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
+import { sealBytesAsync, secretboxSealAsync } from "../crypto/encryptFileAsync.js";
 import {
   downloadKeyFile,
   formatKeyFile,
@@ -74,15 +77,14 @@ import {
 } from "../crypto/keyFile.js";
 import {
   pickRandom,
-  sealBytes,
   sealMessage,
-  secretboxSeal,
-  unsealMessage,
+  unsealMessage
 } from "../crypto/keys.js";
 import {
   findSecretKeyForPublicKey,
   getCurrentKeySet,
 } from "../crypto/keyStorage.js";
+import { compressVideo } from "../crypto/videoCompressor.js";
 import {
   attachmentIdOf,
   normalizeAttachment,
@@ -93,22 +95,33 @@ import { useScreenshotProtection } from "../hooks/useScreenshotProtection.js";
 import useWebRTCCall from "../hooks/useWebRTCCall.js";
 import { getWallpaperBackground, getWallpaperFx, preloadWallpaper } from '../theme/wallpaperBackgrounds.js';
 import activityStore from "../utils/activityStore.js";
+import { getOfflineMedia, removeOfflineMedia, saveOfflineMedia, updateOfflineMedia } from "../utils/offlineMediaQueue.js";
+import {
+  getAllOfflineMessages,
+  getOfflineMessages,
+  removeOfflineMessage,
+  saveOfflineMessage,
+} from "../utils/offlineMessageQueue.js";
 import {
   getArchivedChatKeys,
+  getChatDraft,
   getInfoPanelOpen,
-  getLastQuickReaction,
   getMutedChatKeys,
+  getPinnedChatKeys,
   isChatMuted,
+  saveChatDraft,
   setInfoPanelOpen,
   setLastQuickReaction,
   toggleArchiveChat,
   toggleMuteChat,
+  togglePinChat
 } from "../utils/chatPrefs.js";
 import {
   chatPathForSelection,
   selectionFromParams,
 } from "../utils/chatRoutes.js";
 import { updateFaviconBadge } from "../utils/faviconBadge.js";
+import { getDisplayName } from "../utils/getDisplayName.js";
 import {
   encodeAnnouncement,
   encodeEvent,
@@ -124,14 +137,23 @@ import {
 } from "../utils/hiddenChats.js";
 import {
   clearAllStarred,
+  clearAutoImportantRemoval,
   deleteMessageForMe,
+  getAutoImportantRemovedIds,
   getDeletedForMeIds,
   getPinnedIds,
   getStarredEntries,
   getStarredIds,
+  rememberAutoImportantRemoval,
+  restoreStarredEntries,
   togglePinnedMessage,
   toggleStarredMessage,
 } from "../utils/messageExtras.js";
+import {
+  getAutomaticImportantSource,
+  isAutomaticImportantMessage,
+} from "../utils/importantMessages.js";
+import { getMessagePreviewText } from "../utils/messagePreview.js";
 import {
   buildGroupedNotificationText,
   playNotificationSound,
@@ -150,22 +172,21 @@ import {
   setConversationActivity,
 } from "../utils/readState.js";
 import { shouldEnforceScreenshotProtection } from "../utils/screenshotProtection.js";
+import { formatLastSeen } from "../utils/formatLastSeen.js";
 import { playReceiveSound, playSendSound, startIncomingRingSound, unlockAudio } from "../utils/sounds.js";
+
 const DEFAULT_CHAT_THEME = { presetId: 'default', bubbleColorId: 'default', wallpaperId: 'none' };
 
 const MAX_VOICE_SECONDS = 60;
-const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
-const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — matches backend MAX_ATTACHMENT_SIZE
+// Ciphertext above this size uploads in sequential chunks instead of one
+// request body — must match backend CHUNK_SIZE in middleware/upload.js.
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
 
-function isRecentlyActive(iso) {
-  if (!iso) return false;
-  return Date.now() - new Date(iso).getTime() < ACTIVE_WINDOW_MS;
-}
-
-function formatLastSeen(iso) {
-  if (!iso) return "never logged in";
-  if (isRecentlyActive(iso)) return "online";
-  return `last seen ${new Date(iso).toLocaleString()}`;
+/** Never invent "online" from a timestamp — only real presence may say online. */
+function formatLastSeenLabel(iso) {
+  if (!iso) return "last seen recently";
+  return formatLastSeen(iso);
 }
 
 function formatVoiceTimer(seconds) {
@@ -233,6 +254,20 @@ function isSameDay(d1, d2) {
   );
 }
 
+/** Whether a message belongs to a Clear-chat scope bucket. */
+function messageMatchesClearScope(message, scope) {
+  if (scope === "all") return true;
+  const category = message?.mediaCategory;
+  const hasAttachment = Boolean(
+    message?.attachment &&
+      (typeof message.attachment === "object"
+        ? message.attachment.id || message.attachment._id
+        : message.attachment),
+  );
+  if (scope === "text") return !category && !hasAttachment;
+  return category === scope;
+}
+
 export default function Chat() {
   const { t, i18n } = useTranslation();
   const {
@@ -286,6 +321,9 @@ export default function Chat() {
   const [archivedKeys, setArchivedKeys] = useState(() =>
     getArchivedChatKeys(user?.id),
   );
+  const [pinnedChatKeys, setPinnedChatKeys] = useState(() =>
+    getPinnedChatKeys(user?.id),
+  );
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [clearChatOpen, setClearChatOpen] = useState(false);
@@ -312,6 +350,8 @@ export default function Chat() {
     getDeletedForMeIds(user?.id),
   );
   const [starredIds, setStarredIds] = useState(() => getStarredIds(user?.id));
+  const [importantEntries, setImportantEntries] = useState([]);
+  const [importantLoading, setImportantLoading] = useState(false);
   const [showStarredMessages, setShowStarredMessages] = useState(false);
   const [showChatMedia, setShowChatMedia] = useState(false);
   const [starredScope, setStarredScope] = useState('all'); // 'all' | 'chat'
@@ -325,12 +365,20 @@ export default function Chat() {
   const [uploads, setUploads] = useState([]);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [disappearSeconds, setDisappearSeconds] = useState(0);
+  const importantEntriesRef = useRef([]);
+  const [capsuleUnlocksAt, setCapsuleUnlocksAt] = useState("");
+  const [showCapsulePicker, setShowCapsulePicker] = useState(false);
   const [mediaPreview, setMediaPreview] = useState(null);
   const [mediaPreviewSending, setMediaPreviewSending] = useState(false);
+  const [mediaCompressing, setMediaCompressing] = useState(false);
+  const [mediaCompressProgress, setMediaCompressProgress] = useState(0);
+  const [mediaCompressPhase, setMediaCompressPhase] = useState('encoding');
+  const [videoPlayer, setVideoPlayer] = useState(null);
   const [allowForward, setAllowForward] = useState(true);
   const [forwardUntilSeconds, setForwardUntilSeconds] = useState(0);
   const [gallery, setGallery] = useState(null);
   const [showGroupSettings, setShowGroupSettings] = useState(false);
+  const [showCommandCenter, setShowCommandCenter] = useState(false);
   const [profileUserId, setProfileUserId] = useState(null);
   const [groupComposerMenu, setGroupComposerMenu] = useState(null);
   const [pollDraft, setPollDraft] = useState(null);
@@ -379,6 +427,18 @@ export default function Chat() {
   const [searchResults, setSearchResults] = useState(null); // null = not searching
   const [searchLoading, setSearchLoading] = useState(false);
   const searchDebounceRef = useRef(null);
+  const draftConversationKeyRef = useRef(null);
+  const draftReadyConversationKeyRef = useRef(null);
+
+  useEffect(() => {
+    if (
+      !user?.id ||
+      !draftConversationKeyRef.current ||
+      draftReadyConversationKeyRef.current !== draftConversationKeyRef.current
+    ) return;
+    void saveChatDraft(user.id, draftConversationKeyRef.current, draft);
+  }, [draft, user?.id]);
+
   useEffect(() => {
     const mqMobile = window.matchMedia("(max-width: 768px)");
     const mqCompact = window.matchMedia("(max-width: 1023px)");
@@ -412,17 +472,18 @@ export default function Chat() {
       .catch(() => { }); // Non-critical — the picker just won't open without it; chat still works.
   }, [hasLocalKeyring]);
 
-  useEffect(() => {
+ useEffect(() => {
     setThemeModalOpen(false);
 
-    if (!selected || selected.type !== "dm") {
+    if (!selected || (selected.type !== "dm" && selected.type !== "group")) {
       setChatTheme(DEFAULT_CHAT_THEME);
       return;
     }
 
     let cancelled = false;
+    const fetcher = selected.type === "group" ? fetchGroupChatTheme : fetchChatTheme;
 
-    fetchChatTheme(selected.id).then((theme) => {
+    fetcher(selected.id).then((theme) => {
       if (!cancelled) {
         setChatTheme(theme);
       }
@@ -436,10 +497,10 @@ export default function Chat() {
   // The custom wallpaper endpoint returns raw bytes (auth-gated, owner-only)
   // rather than a public URL, so it has to be fetched as a blob and turned
   // into an object URL, same as attachment previews elsewhere in this app.
-  useEffect(() => {
+useEffect(() => {
     if (
       !selected ||
-      selected.type !== "dm" ||
+      (selected.type !== "dm" && selected.type !== "group") ||
       chatTheme.wallpaperId !== "custom"
     ) {
       setCustomWallpaperUrl(null);
@@ -448,8 +509,9 @@ export default function Chat() {
 
     let cancelled = false;
     let urlToRevoke = null;
+    const fetchUrl = selected.type === "group" ? fetchGroupWallpaperImageUrl : fetchWallpaperImageUrl;
 
-    fetchWallpaperImageUrl(selected.id).then((url) => {
+    fetchUrl(selected.id).then((url) => {
       if (cancelled) {
         URL.revokeObjectURL(url);
         return;
@@ -509,11 +571,13 @@ export default function Chat() {
   const recordStartedAtRef = useRef(0);
   const notifiedCallIdRef = useRef(null);
   const dragCountRef = useRef(0);
-  const imageSrcMapRef = useRef(new Map());
+   const imageSrcMapRef = useRef(new Map());
+  const videoSrcMapRef = useRef(new Map());
   const aiAbortRef = useRef(null);
   const usersRef = useRef([]);
   const groupsRef = useRef([]);
   const storiesRailRef = useRef(null);
+  const retryingOutboxRef = useRef(new Set());
   selectedRef.current = selected;
   userRef.current = user;
   messagesRef.current = messages;
@@ -532,6 +596,20 @@ export default function Chat() {
       "typing:stop",
       target.to ? { to: target.to } : { groupId: target.groupId },
     );
+  }
+
+  function pendingMessageFromOutbox(entry) {
+    return {
+      id: `outbox-${entry.id}`,
+      _id: `outbox-${entry.id}`,
+      from: user.id,
+      ...(entry.type === "group" ? { group: entry.conversationId } : { to: entry.conversationId }),
+      text: entry.displayText,
+      createdAt: entry.queuedAt,
+      _status: "waiting",
+      _pending: true,
+      replyTo: entry.replyTo || null,
+    };
   }
 
   function syncTypingPrivacy() {
@@ -1023,6 +1101,112 @@ export default function Chat() {
     [user, resolveMySecretKey],
   );
 
+  // Refs so Important-messages mapping can use latest directory/decrypt
+  // helpers without re-fetching (and re-toasting) every time users/groups change.
+  const importantDecorateRef = useRef(decorate);
+  importantDecorateRef.current = decorate;
+  const importantUsersRef = useRef(users);
+  importantUsersRef.current = users;
+  const importantGroupsRef = useRef(groups);
+  importantGroupsRef.current = groups;
+
+  const loadImportantMessages = useCallback(async () => {
+    if (!user?.id) return;
+    setImportantLoading(true);
+    try {
+      const { data } = await client.get('/messages/important');
+      const markedAtById = new Map(
+        (data?.data?.entries || []).map((entry) => [String(entry.messageId), entry.markedAt]),
+      );
+      const directoryUsers = importantUsersRef.current;
+      const directoryGroups = importantGroupsRef.current;
+      const next = (data?.data?.messages || []).map((raw) => {
+        const message = importantDecorateRef.current(raw);
+        const messageId = String(message.id || message._id);
+        const groupId = raw.group ? String(raw.group) : null;
+        const group = groupId
+          ? directoryGroups.find((candidate) => String(candidate.id) === groupId)
+          : null;
+        const peerId = raw.group
+          ? groupId
+          : String(raw.from) === String(user.id) ? raw.to : raw.from;
+        const peer = peerId
+          ? directoryUsers.find((candidate) => String(candidate.id) === String(peerId))
+          : null;
+        const type = groupId ? 'group' : 'dm';
+        const title = group?.name || getDisplayName(peer, i18n.language) || 'Chat';
+        return {
+          ...message,
+          id: messageId,
+          type,
+          conversationId: groupId || peerId,
+          conversationKey: groupId ? conversationKeyForGroup(groupId) : conversationKeyForUser(peerId),
+          title,
+          from: raw.from,
+          createdAt: raw.createdAt,
+          hasAttachment: Boolean(message.attachment),
+          attachmentFilename: message.attachment?.filename || null,
+          important: true,
+          isImportant: true,
+          importantAt: markedAtById.get(messageId) || null,
+        };
+      });
+      setImportantEntries(next);
+    } catch (err) {
+      setImportantEntries([]);
+      // Background prefetch — never surface raw validation noise like
+      // "Invalid user id" (happens when an older API treats "important" as a
+      // peer id). Chat itself still works.
+      const status = err.response?.status;
+      const msg = err.response?.data?.error || '';
+      if (status && status !== 400 && status !== 404 && msg !== 'Invalid user id') {
+        showToast(msg || "Couldn't load Important messages", 'error');
+      }
+    } finally {
+      setImportantLoading(false);
+    }
+  }, [getDisplayName, i18n.language, showToast, user?.id]);
+
+  useEffect(() => {
+    if (hasLocalKeyring) void loadImportantMessages();
+  }, [hasLocalKeyring, loadImportantMessages]);
+
+  useEffect(() => {
+    importantEntriesRef.current = importantEntries;
+  }, [importantEntries]);
+
+  const markMessageImportantIfNeeded = useCallback(async (rawMessage) => {
+    if (!rawMessage || !user?.id) return;
+    const messageId = String(rawMessage.id || rawMessage._id || '');
+    if (!messageId) return;
+    const alreadyImportant = importantEntriesRef.current.some((entry) => String(entry.id || entry._id) === messageId);
+    if (alreadyImportant) return;
+    const autoSource = getAutomaticImportantSource(rawMessage);
+    if (!autoSource) return;
+    if (getAutoImportantRemovedIds(user.id).includes(messageId)) return;
+
+    try {
+      await client.post(`/messages/${messageId}/important`);
+      setImportantEntries((current) => [{
+        ...rawMessage,
+        id: messageId,
+        title: rawMessage.title || 'Chat',
+        conversationId: rawMessage.conversationId || rawMessage.group || rawMessage.to || rawMessage.from,
+        type: rawMessage.group ? 'group' : 'dm',
+        hasAttachment: Boolean(rawMessage.attachment || rawMessage.attachments?.length),
+        attachmentFilename: rawMessage.attachment?.filename || rawMessage.attachments?.[0]?.filename || null,
+        text: rawMessage.text || rawMessage.content || null,
+        important: true,
+        isImportant: true,
+        importantAt: new Date().toISOString(),
+        importantSource: autoSource,
+      }, ...current]);
+    } catch (err) {
+      // Ignore duplicate or noisy auto-save failures; the backend already
+      // guards against repeated writes for the same message.
+    }
+  }, [user?.id]);
+
   const recordActivityFromMessage = useCallback(
     (raw) => {
       const at = raw.createdAt || new Date().toISOString();
@@ -1477,6 +1661,9 @@ export default function Chat() {
           }
         }
         const decoratedForNotif = decorate(raw);
+              if (raw.timeCapsule && raw.capsuleDeliveredAt) {
+        showToast('✨ A time capsule just unlocked!', 'success', 5000);
+      }
         const storyPayload = parseStoryPayload(decoratedForNotif.text);
         const reactionsExcluded =
           notifSettings?.messageNotifications === "all_except_reactions" &&
@@ -1489,6 +1676,7 @@ export default function Chat() {
             : shouldNotify(notifSettings, {
               kind: raw.group ? "group" : "dm",
               isMention,
+              isAnnouncement: raw.kind === "announcement",   // NEW
             }));
 
         if (notifyOk) {
@@ -1565,6 +1753,13 @@ export default function Chat() {
         }
       }
 
+      // Always acknowledge delivery as soon as the client receives the message
+      // over the socket, regardless of whether this conversation is currently open.
+      if (String(raw.from) !== String(user.id)) {
+        const socket = getSocket();
+        socket?.emit("message:delivered", { messageId: raw.id || raw._id });
+      }
+
       // Only mutate the open thread for the active conversation.
       if (!isCurrent) return;
 
@@ -1624,11 +1819,21 @@ export default function Chat() {
         }
         return next;
       });
+      void markMessageImportantIfNeeded(raw);
 
       if (String(raw.from) !== String(user.id)) {
         const socket = getSocket();
-        socket?.emit("message:delivered", { messageId: raw.id || raw._id });
-        if (selectedRef.current?.type === "group") {
+
+        const rawGroupId =
+          raw.group && typeof raw.group === "object"
+            ? raw.group.id || raw.group._id
+            : raw.group;
+
+        if (
+          selectedRef.current?.type === "group" &&
+          rawGroupId &&
+          String(selectedRef.current.id) === String(rawGroupId)
+        ) {
           socket?.emit("message:read", {
             messageId: raw.id || raw._id,
             groupId: selectedRef.current.id,
@@ -1636,7 +1841,10 @@ export default function Chat() {
           client
             .post(`/groups/${selectedRef.current.id}/messages/read`)
             .catch(() => { });
-        } else if (selectedRef.current?.type === "dm") {
+        } else if (
+          selectedRef.current?.type === "dm" &&
+          String(selectedRef.current.id) === String(raw.from)
+        ) {
           socket?.emit("message:read", { messageId: raw.id || raw._id });
           client
             .post(`/messages/${selectedRef.current.id}/read`)
@@ -1699,6 +1907,28 @@ export default function Chat() {
           reactedByYou: actor.actorIsCurrentUser,
           conversationKey: groupId ? `group:${groupId}` : undefined,
         });
+      }
+
+      if (changed && String(actorId) !== String(user.id)) {
+        const convKey = groupId
+          ? conversationKeyForGroup(groupId)
+          : conversationKeyForUser(String(decorated.from) === String(user.id) ? decorated.to : decorated.from);
+        const muted = isChatMuted(user.id, convKey);
+        if (!muted && shouldNotify(notifSettings, { kind: 'reaction' })) {
+          playNotificationSound(notifSettings);
+          showNotificationPopup(
+            {
+              title: 'QuantumChat',
+              body: `${actor.actorLabel} reacted ${changed.emoji || ''} to your message`,
+              tag: groupId ? `group:${groupId}` : `dm:${[String(user.id), String(actorId)].sort().join(':')}`,
+            },
+            notifSettings,
+            () =>
+              handleSelectConversation(
+                groupId ? { key: convKey, type: 'group', id: groupId } : { key: convKey, type: 'dm', id: actorId },
+              ),
+          );
+        }
       }
 
       if (!isCurrentConversation(raw)) return;
@@ -1886,6 +2116,7 @@ export default function Chat() {
         setSelected(null);
         setMessages([]);
         setShowGroupSettings(false);
+        setShowCommandCenter(false);
         if (location.pathname !== "/chat") navigate("/chat");
       }
     }
@@ -2035,18 +2266,27 @@ export default function Chat() {
     }
 
     function handlePresenceUpdate({ userId, online, lastLoginAt } = {}) {
+      const id = String(userId);
       setOnlineUserIds((prev) => {
         const next = new Set(prev);
-        if (online) next.add(String(userId));
-        else next.delete(String(userId));
+        if (online) next.add(id);
+        else next.delete(id);
         return next;
       });
-      if (!online && lastLoginAt) {
+      if (lastLoginAt) {
         setUsers((prev) =>
           prev.map((u) =>
-            String(u.id) === String(userId) ? { ...u, lastLoginAt } : u,
+            String(u.id) === id ? { ...u, lastLoginAt } : u,
           ),
         );
+        setSelected((cur) => {
+          if (!cur || cur.type !== "dm" || String(cur.id) !== id) return cur;
+          if (cur.peer?.lastLoginAt === lastLoginAt) return cur;
+          return {
+            ...cur,
+            peer: { ...(cur.peer || {}), lastLoginAt },
+          };
+        });
       }
     }
 
@@ -2115,10 +2355,9 @@ export default function Chat() {
     }
 
     function handleChatCleared(payload = {}) {
-      // Multi-device sync: another of this user's sessions cleared a chat. If
-      // we're viewing that same conversation, empty it here too. The backend
-      // already filters cleared messages out of fetch/sync, so nothing stale
-      // reappears on a later refresh.
+      // Multi-device sync: another of this user's sessions cleared a chat.
+      // Scoped clears (photos only, etc.) must NOT wipe the whole thread —
+      // only drop matching messages. Full "all" clears empty the view.
       const current = selectedRef.current;
       if (!current) return;
       const matchesGroup =
@@ -2129,9 +2368,56 @@ export default function Chat() {
         payload.peerId &&
         current.type === "dm" &&
         String(current.id) === String(payload.peerId);
-      if (matchesGroup || matchesDm) {
+      if (!matchesGroup && !matchesDm) return;
+
+      const scopes = Array.isArray(payload.scopes) && payload.scopes.length
+        ? payload.scopes.map(String)
+        : ["all"];
+      if (scopes.includes("all")) {
         setMessages([]);
+        return;
       }
+
+      const clearedAtMs = payload.clearedAt
+        ? new Date(payload.clearedAt).getTime()
+        : Date.now();
+
+      setMessages((prev) =>
+        prev.filter((m) => {
+          const createdMs = new Date(m.createdAt || 0).getTime();
+          if (createdMs > clearedAtMs) return true;
+          return !scopes.some((scope) => messageMatchesClearScope(m, scope));
+        }),
+      );
+    }
+
+    function handleChatClearUndone(payload = {}) {
+      // Another of this user's sessions undid a clear — re-fetch if we're
+      // looking at that conversation so hidden messages come back.
+      const current = selectedRef.current;
+      if (!current) return;
+      const matchesGroup =
+        payload.groupId &&
+        current.type === "group" &&
+        String(current.id) === String(payload.groupId);
+      const matchesDm =
+        payload.peerId &&
+        current.type === "dm" &&
+        String(current.id) === String(payload.peerId);
+      if (!matchesGroup && !matchesDm) return;
+
+      const endpoint =
+        current.type === "group"
+          ? `/groups/${current.id}/messages`
+          : `/messages/${current.id}`;
+      setLoadingMessages(true);
+      client
+        .get(endpoint, { params: { limit: 80, markRead: 0 } })
+        .then((res) => {
+          setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+        })
+        .catch(() => {})
+        .finally(() => setLoadingMessages(false));
     }
 
     function handleUserStatus(payload = {}) {
@@ -2180,6 +2466,7 @@ export default function Chat() {
     socket.on("friend:request:accepted", handleFriendRequestAccepted);
     socket.on("friend:removed", handleFriendRemoved);
     socket.on("chat:cleared", handleChatCleared);
+    socket.on("chat:clear-undone", handleChatClearUndone);
     socket.on("user:status", handleUserStatus);
 
     // Auth may connect the socket before Chat mounts, so the initial
@@ -2215,6 +2502,7 @@ export default function Chat() {
       socket.off("friend:request:accepted", handleFriendRequestAccepted);
       socket.off("friend:removed", handleFriendRemoved);
       socket.off("chat:cleared", handleChatCleared);
+      socket.off("chat:clear-undone", handleChatClearUndone);
       socket.off("user:status", handleUserStatus);
   socket.off("connect", requestPresence);
   stopTyping({ emit: false });
@@ -2248,26 +2536,39 @@ export default function Chat() {
 
     let cancelled = false;
     let inFlight = false;
+    let lastSocketPeerSyncAt = 0;
+    let lastWatchedPeerId = null;
 
     async function syncPresence() {
       if (cancelled || inFlight) return;
       if (document.visibilityState === "hidden") return;
       const socket = getSocket();
-      if (socket?.connected) return;
+      const socketConnected = Boolean(socket?.connected);
+
+      const current = selectedRef.current;
+      const watchPeerId =
+        current?.type === "dm" &&
+          !current.isSelfChat &&
+          String(current.id) !== String(user.id)
+          ? String(current.id)
+          : null;
+      const watchGroupId =
+        current?.type === "group" ? String(current.id) : null;
+      const typing = presenceTypingRef.current || {};
+
+      // Socket owns live online/typing. Still heartbeat when watching a peer so
+      // last-seen stays fresh (and as full fallback when the socket is down).
+      if (socketConnected) {
+        if (!watchPeerId) return;
+        const peerChanged = watchPeerId !== lastWatchedPeerId;
+        lastWatchedPeerId = watchPeerId;
+        // Avoid hammering the DB every 2s while Socket.IO is already connected.
+        if (!peerChanged && Date.now() - lastSocketPeerSyncAt < 12_000) return;
+        lastSocketPeerSyncAt = Date.now();
+      }
 
       inFlight = true;
       try {
-        const current = selectedRef.current;
-        const watchPeerId =
-          current?.type === "dm" &&
-            !current.isSelfChat &&
-            String(current.id) !== String(user.id)
-            ? String(current.id)
-            : null;
-        const watchGroupId =
-          current?.type === "group" ? String(current.id) : null;
-        const typing = presenceTypingRef.current || {};
-
         const data = await postPresenceHeartbeat({
           typingTo: typing.to || null,
           typingGroupId: typing.groupId || null,
@@ -2277,7 +2578,33 @@ export default function Chat() {
 
         if (cancelled) return;
 
-        setOnlineUserIds(new Set((data.onlineUserIds || []).map(String)));
+        if (!socketConnected) {
+          setOnlineUserIds(new Set((data.onlineUserIds || []).map(String)));
+        }
+
+        const peerPresence = data.peerPresence;
+        if (peerPresence?.userId) {
+          const peerId = String(peerPresence.userId);
+          if (peerPresence.lastLoginAt) {
+            setUsers((prev) =>
+              prev.map((u) =>
+                String(u.id) === peerId
+                  ? { ...u, lastLoginAt: peerPresence.lastLoginAt }
+                  : u,
+              ),
+            );
+            setSelected((cur) => {
+              if (!cur || cur.type !== "dm" || String(cur.id) !== peerId) return cur;
+              if (cur.peer?.lastLoginAt === peerPresence.lastLoginAt) return cur;
+              return {
+                ...cur,
+                peer: { ...(cur.peer || {}), lastLoginAt: peerPresence.lastLoginAt },
+              };
+            });
+          }
+        }
+
+        if (socketConnected) return;
 
         const events = Array.isArray(data.typing) ? data.typing : [];
         if (watchPeerId) {
@@ -2353,6 +2680,14 @@ export default function Chat() {
     const threadKey = selectedKey;
     const threadType = selectedType;
     const threadId = selectedId;
+    // DMs must use a real Mongo ObjectId — reserved paths like "important"
+    // or "settings" must never hit GET /messages/:userId.
+    if (
+      threadType === "dm" &&
+      !/^[a-f0-9]{24}$/i.test(String(threadId))
+    ) {
+      return undefined;
+    }
     const switching = loadedThreadKeyRef.current !== threadKey;
     loadedThreadKeyRef.current = threadKey;
 
@@ -2387,6 +2722,9 @@ export default function Chat() {
       .then((res) => {
         if (cancelled) return;
         const next = (res.data.data || []).map((raw) => decorateRef.current(raw));
+        getOfflineMessages(user.id, threadKey).then((queued) => {
+          if (!cancelled) setMessages([...next, ...queued.map(pendingMessageFromOutbox)]);
+        });
         setHasMoreMessages(Boolean(res.data.meta?.hasMore));
         oldestCreatedAtRef.current = next[0]?.createdAt || null;
         if (next.length) {
@@ -2402,12 +2740,13 @@ export default function Chat() {
         }
         setTimeout(() => scrollToBottomRef.current("auto"), 50);
       })
-      .catch((err) =>
+      .catch((err) => {
+        if (cancelled) return;
         showToastRef.current(
           err.response?.data?.error || "Failed to load messages",
           "error",
-        ),
-      )
+        );
+      })
       .finally(() => {
         if (!cancelled) setLoadingMessages(false);
       });
@@ -2854,13 +3193,55 @@ export default function Chat() {
     (conversation) => {
       if (!conversation || conversation.type === "group") return null;
       if (String(conversation.id) === String(user?.id)) return selfPeer;
-      return (
-        conversation.peer ||
-        users.find((u) => String(u.id) === String(conversation.id)) ||
-        null
-      );
+      const fromList = users.find((u) => String(u.id) === String(conversation.id));
+      const peer = conversation.peer;
+      // Prefer live users[] fields (lastLoginAt) over a stale selected.peer snapshot.
+      if (fromList && peer) return { ...peer, ...fromList };
+      return fromList || peer || null;
     },
     [user?.id, selfPeer, users],
+  );
+
+  const ensurePeerKeys = useCallback(
+    async (targetConversation) => {
+      if (!targetConversation || targetConversation.type === "group") return [];
+      let peer = resolveDmPeer(targetConversation);
+      let keys = (peer?.publicKeys || []).filter(Boolean);
+      if (keys.length > 0) return keys;
+
+      const peerId = targetConversation.id;
+      if (!peerId || String(peerId) === String(user?.id)) return [];
+
+      try {
+        const { data } = await client.get(`/users/${peerId}`);
+        const freshUser = data?.data;
+        if (freshUser) {
+          const freshKeys = (freshUser.publicKeys || []).filter(Boolean);
+          setUsers((prev) => {
+            const idx = prev.findIndex((u) => String(u.id) === String(peerId));
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], ...freshUser };
+              return copy;
+            }
+            return [...prev, freshUser];
+          });
+          setSelected((cur) => {
+            if (!cur || cur.type !== "dm" || String(cur.id) !== String(peerId)) return cur;
+            return {
+              ...cur,
+              title: cur.title === "Chat" ? (getDisplayName(freshUser, i18n.language) || freshUser.username || "Chat") : cur.title,
+              peer: { ...(cur.peer || {}), ...freshUser },
+            };
+          });
+          return freshKeys;
+        }
+      } catch (err) {
+        console.warn("[ensurePeerKeys] failed to fetch public keys for peer", peerId, err);
+      }
+      return [];
+    },
+    [resolveDmPeer, user?.id, i18n.language],
   );
 
   const screenshotProtectionOn = useMemo(
@@ -2875,13 +3256,15 @@ export default function Chat() {
       }),
     [user?.id, selected, profileUserId, users, groups, resolveDmPeer],
   );
-  useScreenshotProtection(screenshotProtectionOn, {
+  // Only protect the open chat thread — Settings and other app overlays stay capturable.
+  useScreenshotProtection(screenshotProtectionOn && !showSettings, {
     scope: "chat",
+    targetSelector: ".chat-main",
     onAttempt: (reason) => {
       showToast(
         reason === "screenshot"
-          ? "Screenshot blocked — this contact protects their content"
-          : "Screen capture blocked — this contact protects their content",
+          ? "Screenshot blocked — this contact protects their chat"
+          : "Screen capture blocked — this contact protects their chat",
         "info",
         3500,
       );
@@ -2896,6 +3279,7 @@ export default function Chat() {
     const activeGroups = searchResults ? searchResults.groups : groups;
     const muted = new Set(mutedKeys.map(String));
     const archived = new Set(archivedKeys.map(String));
+    const pinned = new Set(pinnedChatKeys.map(String));
 
     if (user?.id && selfPeer) {
       const key = conversationKeyForUser(user.id);
@@ -2920,6 +3304,7 @@ export default function Chat() {
         peer: selfPeer,
         muted: muted.has(String(key)),
         archived: archived.has(String(key)),
+        pinned: pinned.has(String(key)),
         online: false,
         isSelfChat: true,
       });
@@ -2951,6 +3336,7 @@ export default function Chat() {
         peer: u,
         muted: muted.has(String(key)),
         archived: archived.has(String(key)),
+        pinned: pinned.has(String(key)),
         online,
       });
     }
@@ -2981,6 +3367,7 @@ export default function Chat() {
         group: g,
         muted: muted.has(String(key)),
         archived: archived.has(String(key)),
+        pinned: pinned.has(String(key)),
         online: false,
       });
     }
@@ -3008,6 +3395,7 @@ export default function Chat() {
 
     items.sort((a, b) => {
       if (a.isSelfChat !== b.isSelfChat) return a.isSelfChat ? -1 : 1;
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
       if (a.unread !== b.unread) return a.unread ? -1 : 1;
       return String(b.sortAt).localeCompare(String(a.sortAt));
     });
@@ -3051,6 +3439,7 @@ export default function Chat() {
     hiddenChatIds,
     mutedKeys,
     archivedKeys,
+    pinnedChatKeys,
     onlineUserIds,
     searchResults,
     vaultUnlocked,
@@ -3148,7 +3537,15 @@ export default function Chat() {
     }
     setSelected(c);
     setError("");
+    draftConversationKeyRef.current = c.key;
+    draftReadyConversationKeyRef.current = null;
     setDraft("");
+    getChatDraft(user.id, c.key).then((savedDraft) => {
+      if (draftConversationKeyRef.current === c.key) {
+        draftReadyConversationKeyRef.current = c.key;
+        setDraft(savedDraft);
+      }
+    });
     setReplyTo(null);
     setEditingMessage(null);
     setShowEmojiPicker(false);
@@ -3159,6 +3556,7 @@ export default function Chat() {
     setMentionOpen(false);
     setPendingAnnouncement(false);
     setShowGroupSettings(false);
+    setShowCommandCenter(false);
     setProfileUserId(null);
     setPeerTyping(false);
     setGroupTypingUsers([]);
@@ -3173,6 +3571,9 @@ export default function Chat() {
     if (syncUrl) {
       const next = chatPathForSelection(c);
       if (location.pathname !== next) navigate(next);
+    }
+    if (c.type === "dm" && !c.isSelfChat && (!c.peer?.publicKeys?.length || c.title === "Chat")) {
+      ensurePeerKeys(c).catch(() => {});
     }
   }
 
@@ -3356,9 +3757,9 @@ export default function Chat() {
                 fontSize: '0.8rem',
                 fontWeight: '600',
                 borderRadius: '4px',
-                border: 'none',
-                background: '#ffffff',
-                color: '#111827',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
                 cursor: 'pointer',
                 marginTop: '2px',
               }}
@@ -3539,7 +3940,7 @@ export default function Chat() {
 
   async function sendGroupPayload(
     plaintext,
-    { kind, mentionedUserIds, tempId, displayText, replyToId, attachmentId, viewOnce } = {},
+    { kind, mentionedUserIds, tempId, displayText, replyToId, attachmentId, viewOnce, clientMessageId } = {},
   ) {
     if (!selected || selected.type !== "group") {
       throw new Error("No group selected");
@@ -3552,6 +3953,7 @@ export default function Chat() {
     }
     const isPublic = group.visibility === "public";
     const payload = { kind: kind || "text" };
+    if (clientMessageId) payload.clientMessageId = clientMessageId;
     if (isPublic) {
       payload.content = plaintext;
     } else {
@@ -3565,10 +3967,21 @@ export default function Chat() {
     if (disappearSeconds > 0) payload.expiresInSeconds = disappearSeconds;
     const forwardPolicy = buildForwardPolicy();
     if (forwardPolicy) payload.forwardPolicy = forwardPolicy;
+    if (clientMessageId) {
+      await saveOfflineMessage(user.id, {
+        id: clientMessageId,
+        type: "group",
+        conversationId: selected.id,
+        conversationKey: selected.key,
+        displayText: displayText ?? plaintext,
+        payload,
+      });
+    }
     const { data } = await client.post(
       `/groups/${selected.id}/messages`,
       payload,
     );
+    if (clientMessageId) await removeOfflineMessage(user.id, clientMessageId);
     recordActivityFromMessage(data.data);
     setMessages((prev) =>
       mergeConfirmedMessage(prev, {
@@ -3579,6 +3992,52 @@ export default function Chat() {
     );
     return data.data;
   }
+
+  async function retryOfflineMessage(entry) {
+    if (!entry?.id || retryingOutboxRef.current.has(entry.id)) return;
+    retryingOutboxRef.current.add(entry.id);
+    try {
+      const endpoint = entry.type === "group"
+        ? `/groups/${entry.conversationId}/messages`
+        : "/messages";
+      const { data } = await client.post(endpoint, entry.payload);
+      await removeOfflineMessage(user.id, entry.id);
+      recordActivityFromMessage(data.data);
+      setMessages((prev) =>
+        mergeConfirmedMessage(prev, {
+          tempId: `outbox-${entry.id}`,
+          serverRaw: data.data,
+          displayText: entry.displayText,
+        }),
+      );
+      playSendSound();
+    } catch {
+      // Keep the encrypted request in the outbox for the next reconnect.
+    } finally {
+      retryingOutboxRef.current.delete(entry.id);
+    }
+  }
+
+  function isRetryableSendError(err) {
+    if (err?.code === "OUTBOX_UNAVAILABLE") return false;
+    const status = err?.response?.status;
+    return !status || status === 408 || status === 429 || status >= 500;
+  }
+
+  async function retryOfflineMessages(conversationKey) {
+    if (!navigator.onLine || !user?.id) return;
+    const entries = conversationKey
+      ? await getOfflineMessages(user.id, conversationKey)
+      : await getAllOfflineMessages(user.id);
+    await Promise.all(entries.map((entry) => retryOfflineMessage(entry)));
+  }
+
+  useEffect(() => {
+    const retry = () => retryOfflineMessages();
+    window.addEventListener("online", retry);
+    retry();
+    return () => window.removeEventListener("online", retry);
+  }, [selected?.key, user?.id]);
 
   async function saveEncryptedAINote(text) {
     if (!selected || !text?.trim()) return;
@@ -3684,8 +4143,33 @@ export default function Chat() {
     if (!selected) return;
     const type = selected.type;
     const id = selected.id;
+    const conversationKey = selected.key;
     const clearingStarred = scopes.includes("starred");
-    const serverScopes = scopes.filter((s) => s !== "starred");
+    const CONTENT_SCOPES = ["photo", "video", "voice", "document", "text"];
+    let serverScopes = scopes.filter((s) => s !== "starred");
+    // Selecting every content type is a full clear — use the single 'all'
+    // watermark so we don't leave five overlapping scoped entries.
+    if (CONTENT_SCOPES.every((k) => serverScopes.includes(k))) {
+      serverScopes = ["all"];
+    }
+
+    // Snapshot for Undo (toast stays up ~8s).
+    const previousClearedEntries = (user.clearedConversations || [])
+      .filter((c) => c && c.conversationKey === conversationKey)
+      .map((c) => ({
+        conversationKey: c.conversationKey,
+        scope: c.scope || "all",
+        clearedAt: c.clearedAt,
+      }));
+    const previousMessages =
+      selectedRef.current &&
+      selectedRef.current.type === type &&
+      String(selectedRef.current.id) === String(id)
+        ? messages
+        : null;
+    const previousStarredEntries = clearingStarred
+      ? getStarredEntries(user.id)
+      : null;
 
     try {
       setClearChatBusy(true);
@@ -3708,24 +4192,95 @@ export default function Chat() {
 
       const current = selectedRef.current;
       if (current && current.type === type && String(current.id) === String(id)) {
-        // Re-fetch rather than blanking outright — a scoped clear (e.g. just
-        // photos) should still leave the remaining messages visible.
-        setLoadingMessages(true);
-        const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
-        try {
-          const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
-          setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
-        } finally {
-          setLoadingMessages(false);
+        if (serverScopes.includes("all")) {
+          setMessages([]);
+        } else if (serverScopes.length) {
+          // Re-fetch rather than blanking outright — a scoped clear (e.g. just
+          // photos) should still leave the remaining messages visible.
+          setLoadingMessages(true);
+          const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
+          try {
+            const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
+            setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+          } finally {
+            setLoadingMessages(false);
+          }
         }
       }
 
-      showToast("Chat cleared", "success");
+      const toastLabel = serverScopes.includes("all")
+        ? "Chat cleared"
+        : serverScopes.length
+          ? "Selected messages cleared"
+          : clearingStarred
+            ? "Starred messages cleared"
+            : "Chat cleared";
+
+      let undoUsed = false;
+      showToast(toastLabel, "success", 8000, {
+        actionLabel: "Undo",
+        onAction: () => {
+          if (undoUsed) return;
+          undoUsed = true;
+          void undoClearChat({
+            type,
+            id,
+            previousClearedEntries,
+            previousMessages,
+            previousStarredEntries,
+            hadServerClear: serverScopes.length > 0,
+          });
+        },
+      });
       setClearChatOpen(false);
     } catch (err) {
       showToast(err.response?.data?.error || "Failed to clear chat", "error");
     } finally {
       setClearChatBusy(false);
+    }
+  }
+
+  async function undoClearChat({
+    type,
+    id,
+    previousClearedEntries,
+    previousMessages,
+    previousStarredEntries,
+    hadServerClear,
+  }) {
+    try {
+      if (hadServerClear) {
+        const payload =
+          type === "group"
+            ? { groupId: id, restoreEntries: previousClearedEntries }
+            : { peerId: id, restoreEntries: previousClearedEntries };
+        const { data } = await client.post("/users/me/clear-chat/undo", payload);
+        if (data?.data) updateSessionUser(data.data);
+      }
+
+      if (previousStarredEntries) {
+        setStarredIds(restoreStarredEntries(user.id, previousStarredEntries));
+      }
+
+      const current = selectedRef.current;
+      if (current && current.type === type && String(current.id) === String(id)) {
+        if (Array.isArray(previousMessages)) {
+          setMessages(previousMessages);
+        } else {
+          setLoadingMessages(true);
+          const endpoint = type === "group" ? `/groups/${id}/messages` : `/messages/${id}`;
+          try {
+            const res = await client.get(endpoint, { params: { limit: 80, markRead: 0 } });
+            setMessages((res.data.data || []).map((raw) => decorateRef.current(raw)));
+          } finally {
+            setLoadingMessages(false);
+          }
+        }
+      }
+
+      showToast("Clear undone", "success", 2500);
+    } catch (err) {
+      showToast(err.response?.data?.error || "Could not undo clear", "error");
     }
   }
   async function handleUnblockUser(peerId) {
@@ -4002,7 +4557,7 @@ export default function Chat() {
           prompt.replace(/@QuantumAI\b/gi, "").trim() ||
           "Help with this conversation.",
         context,
-        link: { groupId: selected.id },
+        link: { groupId: selected.id, quantumChatPeerId: user.id },
         ephemeral: true,
         signal: controller.signal,
         onDone: (payload) => {
@@ -4107,9 +4662,11 @@ export default function Chat() {
             ),
           );
         } else {
-          const peer = resolveDmPeer(selected);
           const myKey = pickRandom(getCurrentKeySet(user.id));
-          const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+          let recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+          if (recipientKeys.length === 0 && selected) {
+            recipientKeys = await ensurePeerKeys(selected);
+          }
           if (!myKey?.publicKey || recipientKeys.length === 0) {
             showToast("Missing encryption keys for this conversation", "error");
             return;
@@ -4176,7 +4733,8 @@ export default function Chat() {
           }
         }
         const kind = asAnnouncement ? "announcement" : "text";
-        const tempId = `tmp-${crypto.randomUUID()}`;
+        const clientMessageId = crypto.randomUUID();
+        const tempId = `outbox-${clientMessageId}`;
         const replySnapshot = replyTo;
         const draftSnapshot = draft;
 
@@ -4216,6 +4774,7 @@ export default function Chat() {
             kind,
             mentionedUserIds,
             tempId,
+            clientMessageId,
             displayText: plaintext,
             replyToId: replySnapshot
               ? replySnapshot.id || replySnapshot._id
@@ -4225,27 +4784,37 @@ export default function Chat() {
             await invokeGroupQuantumAI(bodyText, group);
           }
         } catch (err) {
-          setMessages((prev) =>
-            prev.filter((m) => String(m.id || m._id) !== tempId),
-          );
-          setDraft(draftSnapshot);
-          setReplyTo(replySnapshot);
+          if (isRetryableSendError(err)) {
+            setMessages((prev) => prev.map((m) =>
+              String(m.id || m._id) === tempId ? { ...m, _status: "waiting" } : m,
+            ));
+          } else {
+            await removeOfflineMessage(user.id, clientMessageId);
+            setMessages((prev) => prev.filter((m) => String(m.id || m._id) !== tempId));
+            setDraft(draftSnapshot);
+            setReplyTo(replySnapshot);
+          }
           throw err;
         }
       } else {
-        const peer = resolveDmPeer(selected);
         const myKey = pickRandom(getCurrentKeySet(user.id));
-        const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+        let recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+        if (recipientKeys.length === 0 && selected) {
+          recipientKeys = await ensurePeerKeys(selected);
+        }
         if (!myKey?.publicKey || recipientKeys.length === 0) {
           showToast("Missing encryption keys for this conversation", "error");
           return;
         }
         const draftSnapshot = draft;
         const replySnapshot = replyTo;
-        const tempId = `tmp-${crypto.randomUUID()}`;
+        const clientMessageId = crypto.randomUUID();
+        const tempId = `outbox-${clientMessageId}`;
         const plaintext = draft;
 
         setDraft("");
+        setCapsuleUnlocksAt("");
+        setShowCapsulePicker(false);
         setReplyTo(null);
         setMentionOpen(false);
         if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -4278,11 +4847,25 @@ export default function Chat() {
           const forRecipient = sealMessage(plaintext, pickRandom(recipientKeys));
           const forSender = sealMessage(plaintext, myKey.publicKey);
           const body = { to: selected.id, forRecipient, forSender };
+          body.clientMessageId = clientMessageId;
           if (replySnapshot) body.replyTo = replySnapshot.id || replySnapshot._id;
           if (disappearSeconds > 0) body.expiresInSeconds = disappearSeconds;
+          if (capsuleUnlocksAt) {
+            body.timeCapsule = true;
+            body.unlocksAt = new Date(capsuleUnlocksAt).toISOString();
+          }
           const forwardPolicy = buildForwardPolicy();
           if (forwardPolicy) body.forwardPolicy = forwardPolicy;
+          await saveOfflineMessage(user.id, {
+            id: clientMessageId,
+            type: "dm",
+            conversationId: selected.id,
+            conversationKey: selected.key,
+            displayText: plaintext,
+            payload: body,
+          });
           const { data } = await client.post("/messages", body);
+          await removeOfflineMessage(user.id, clientMessageId);
           recordActivityFromMessage(data.data);
           setMessages((prev) =>
             mergeConfirmedMessage(prev, {
@@ -4292,11 +4875,16 @@ export default function Chat() {
             }),
           );
         } catch (err) {
-          setMessages((prev) =>
-            prev.filter((m) => String(m.id || m._id) !== tempId),
-          );
-          setDraft(draftSnapshot);
-          setReplyTo(replySnapshot);
+          if (isRetryableSendError(err)) {
+            setMessages((prev) => prev.map((m) =>
+              String(m.id || m._id) === tempId ? { ...m, _status: "waiting" } : m,
+            ));
+          } else {
+            await removeOfflineMessage(user.id, clientMessageId);
+            setMessages((prev) => prev.filter((m) => String(m.id || m._id) !== tempId));
+            setDraft(draftSnapshot);
+            setReplyTo(replySnapshot);
+          }
           throw err;
         }
       }
@@ -4349,7 +4937,55 @@ export default function Chat() {
     return undefined;
   }
 
-  async function sendAttachmentFile(file, { plainBytes, quiet, viewOnce = false } = {}) {
+  // Large-file path: same durable result as putCiphertext, but sent as
+  // sequential small requests instead of one big body — Vercel's
+  // serverless functions reject an oversized single request body outright,
+  // which is what actually broke video uploads.
+    async function putCiphertextChunked(
+    cipherBytes,
+    { pendingUploadId, slot, signal, onProgress },
+  ) {
+    const total = cipherBytes.byteLength;
+    const totalChunks = Math.max(1, Math.ceil(total / CHUNK_SIZE));
+    const CONCURRENCY = 4; // parallel round-trips per slot — chunks carry their own index, order doesn't matter server-side
+    const loadedByChunk = new Array(totalChunks).fill(0);
+    const report = () => {
+      const sent = loadedByChunk.reduce((a, b) => a + b, 0);
+      onProgress?.({ loaded: sent, total });
+    };
+
+    async function uploadChunk(chunkIndex) {
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, total);
+      const chunkBlob = new Blob([cipherBytes.subarray(start, end)], {
+        type: "application/octet-stream",
+      });
+
+      await client.put(
+        `/attachments/pending/${pendingUploadId}/chunk?slot=${slot}&chunkIndex=${chunkIndex}&totalChunks=${totalChunks}`,
+        chunkBlob,
+        { signal, headers: { "Content-Type": "application/octet-stream" } },
+      );
+
+      loadedByChunk[chunkIndex] = end - start;
+      report();
+    }
+
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < totalChunks) {
+        const chunkIndex = nextIndex;
+        nextIndex += 1;
+        await uploadChunk(chunkIndex);
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, totalChunks) }, worker),
+    );
+    return undefined;
+  }
+  async function sendAttachmentFile(file, { plainBytes, quiet, viewOnce = false, offlineId, skipOutbox = false, offlineEntry } = {}) {
     if (
       !file ||
       !selected ||
@@ -4365,25 +5001,54 @@ export default function Chat() {
       return;
     }
 
-    const uploadId = crypto.randomUUID();
+    const uploadId = offlineId || crypto.randomUUID();
     const controller = new AbortController();
     setUploads((prev) => [
       ...prev,
       { id: uploadId, name: file.name, progress: 0, controller },
     ]);
+    const pendingMessageId = `outbox-${uploadId}`;
+    setMessages((prev) => {
+      if (prev.some((message) => String(message.id || message._id) === pendingMessageId)) return prev;
+      return [...prev, {
+        id: pendingMessageId,
+        _id: pendingMessageId,
+        from: user.id,
+        ...(selected.type === "group" ? { group: selected.id } : { to: selected.id }),
+        text: file.name || "Attachment",
+        createdAt: new Date().toISOString(),
+        _status: "sending",
+        _pending: true,
+        _mediaPending: true,
+      }];
+    });
 
     try {
       if (selected.type === "group") {
         const fileBytes =
           plainBytes || new Uint8Array(await file.arrayBuffer());
-        const sealed = secretboxSeal(fileBytes);
+        const sealed = await secretboxSealAsync(fileBytes);
+        if (!skipOutbox) await saveOfflineMedia(user.id, {
+          id: uploadId,
+          type: "group",
+          conversationId: selected.id,
+          conversationKey: selected.key,
+          filename: file.name,
+          mimetype: file.type || "application/octet-stream",
+          viewOnce,
+          sealedKey: sealed.key,
+          sealedNonce: sealed.nonce,
+          sourceBytes: fileBytes,
+        });
         const mimeType = file.type || "application/octet-stream";
         const cipherBlob = new Blob([sealed.cipherBytes], { type: mimeType });
+        const useChunked = sealed.cipherBytes.byteLength > CHUNK_SIZE;
 
         const initRes = await client.post(
           "/attachments/init",
           {
             groupId: selected.id,
+            clientUploadId: uploadId,
             secretboxNonce: sealed.nonce,
             filename: file.name,
             mimetype: mimeType,
@@ -4391,38 +5056,49 @@ export default function Chat() {
           },
           { signal: controller.signal },
         );
-        const { pendingUploadId } = initRes.data.data;
+        const initData = initRes.data.data;
+        const pendingUploadId = initData.pendingUploadId;
+        let attachment = initData.finalizedAttachmentId
+          ? { id: initData.finalizedAttachmentId, filename: file.name, mimetype: mimeType, size: file.size }
+          : null;
 
-        const recipientDirectUploadId = await putCiphertext(
-          cipherBlob,
-          file.name,
-          {
-            pendingUploadId,
-            slot: "recipient",
-            signal: controller.signal,
-            onProgress: (event) => {
-              if (!event.total) return;
-              const progress = Math.min(
-                100,
-                Math.round((event.loaded / event.total) * 100),
-              );
-              setUploads((prev) =>
-                prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)),
-              );
-            },
-          },
-        );
+        const onRecipientProgress = (event) => {
+          if (!event.total) return;
+          const progress = Math.min(
+            100,
+            Math.round((event.loaded / event.total) * 100),
+          );
+          setUploads((prev) =>
+            prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)),
+          );
+        };
 
-        const finalizeRes = await client.post(
-          "/attachments/finalize",
-          { pendingUploadId, recipientDirectUploadId },
-          { signal: controller.signal },
-        );
-        const attachment = finalizeRes.data.data;
+        const recipientDirectUploadId = attachment ? undefined : (useChunked
+          ? await putCiphertextChunked(sealed.cipherBytes, {
+              pendingUploadId,
+              slot: "recipient",
+              signal: controller.signal,
+              onProgress: onRecipientProgress,
+            })
+          : await putCiphertext(cipherBlob, file.name, {
+              pendingUploadId,
+              slot: "recipient",
+              signal: controller.signal,
+              onProgress: onRecipientProgress,
+            }));
+        if (!attachment) {
+          const finalizeRes = await client.post(
+            "/attachments/finalize",
+            { pendingUploadId: initData.pendingUploadId, clientUploadId: uploadId, recipientDirectUploadId },
+            { signal: controller.signal },
+          );
+          attachment = finalizeRes.data.data;
+          await updateOfflineMedia(user.id, uploadId, { finalizedAttachmentId: attachment.id });
+        }
         const plaintext = encodeGroupFile({
           attachmentId: attachment.id,
-          key: sealed.key,
-          nonce: sealed.nonce,
+          key: offlineEntry?.sealedKey || sealed.key,
+          nonce: offlineEntry?.sealedNonce || sealed.nonce,
           filename: attachment.filename || file.name,
           mimetype:
             attachment.mimetype || file.type || "application/octet-stream",
@@ -4432,26 +5108,47 @@ export default function Chat() {
         await sendGroupPayload(plaintext, {
           kind: "file",
           attachmentId: attachment.id,
+          clientMessageId: uploadId,
+          tempId: pendingMessageId,
           ...(wantViewOnce ? { viewOnce: true } : {}),
         });
+        await removeOfflineMedia(user.id, uploadId);
         playSendSound();
         if (!quiet) showToast("File sent successfully", "success", 3000);
         setTimeout(() => scrollToBottom("smooth"), 50);
         return;
       }
 
-      const peer = resolveDmPeer(selected);
       const myKey = pickRandom(getCurrentKeySet(user.id));
-      const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+      let recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+      if (recipientKeys.length === 0 && selected) {
+        recipientKeys = await ensurePeerKeys(selected);
+      }
       if (!myKey?.publicKey || recipientKeys.length === 0) {
         showToast("Missing encryption keys for this conversation", "error");
         return;
       }
       const recipientPublicKey = pickRandom(recipientKeys);
       const fileBytes = plainBytes || new Uint8Array(await file.arrayBuffer());
-      const forRecipientFile = sealBytes(fileBytes, recipientPublicKey);
-      const forSenderFile = sealBytes(fileBytes, myKey.publicKey);
+      if (!skipOutbox) await saveOfflineMedia(user.id, {
+        id: uploadId,
+        type: "dm",
+        conversationId: selected.id,
+        conversationKey: selected.key,
+        filename: file.name,
+        mimetype: file.type || "application/octet-stream",
+        viewOnce,
+        sourceBytes: fileBytes,
+      });
+      // Safe to run concurrently: each call only transfers its OWN output
+      // buffer back (see cryptoWorker.js) — fileBytes itself is never
+      // transferred, so there's nothing shared to race on.
+      const [forRecipientFile, forSenderFile] = await Promise.all([
+        sealBytesAsync(fileBytes, recipientPublicKey),
+        sealBytesAsync(fileBytes, myKey.publicKey),
+      ]);
       const mimeType = file.type || "application/octet-stream";
+      const useChunked = forRecipientFile.cipherBytes.byteLength > CHUNK_SIZE;
       const recipientBlob = new Blob([forRecipientFile.cipherBytes], {
         type: mimeType,
       });
@@ -4463,6 +5160,7 @@ export default function Chat() {
         "/attachments/init",
         {
           recipientId: selected.id,
+          clientUploadId: uploadId,
           filename: file.name,
           mimetype: mimeType,
           size: recipientBlob.size,
@@ -4475,7 +5173,10 @@ export default function Chat() {
         },
         { signal: controller.signal },
       );
-      const { pendingUploadId, sender } = initRes.data.data;
+      const initData = initRes.data.data;
+      const existingAttachmentId = initData.finalizedAttachmentId;
+      const pendingUploadId = initData.pendingUploadId;
+      const sender = initData.sender;
 
       let recipientLoaded = 0;
       let senderLoaded = 0;
@@ -4490,42 +5191,72 @@ export default function Chat() {
           prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)),
         );
       };
-      const recipientDirectUploadId = await putCiphertext(
-        recipientBlob,
-        file.name,
-        {
-          pendingUploadId,
-          slot: "recipient",
-          signal: controller.signal,
-          onProgress: (event) => {
-            recipientLoaded = event.loaded || 0;
-            reportProgress();
-          },
-        },
-      );
-      const senderDirectUploadId = sender
-        ? await putCiphertext(senderBlob, file.name, {
-          pendingUploadId,
-          slot: "sender",
-          signal: controller.signal,
-          onProgress: (event) => {
-            senderLoaded = event.loaded || 0;
-            reportProgress();
-          },
-        })
-        : undefined;
+      const recipientUploadPromise = existingAttachmentId ? Promise.resolve(undefined) : (useChunked
+        ? putCiphertextChunked(forRecipientFile.cipherBytes, {
+            pendingUploadId,
+            slot: "recipient",
+            signal: controller.signal,
+            onProgress: (event) => {
+              recipientLoaded = event.loaded || 0;
+              reportProgress();
+            },
+          })
+        : putCiphertext(recipientBlob, file.name, {
+            pendingUploadId,
+            slot: "recipient",
+            signal: controller.signal,
+            onProgress: (event) => {
+              recipientLoaded = event.loaded || 0;
+              reportProgress();
+            },
+          }));
 
-      const finalizeRes = await client.post(
-        "/attachments/finalize",
-        { pendingUploadId, recipientDirectUploadId, senderDirectUploadId },
-        { signal: controller.signal },
-      );
-      const attachmentId = finalizeRes.data.data.id;
+      const senderUploadPromise = existingAttachmentId ? Promise.resolve(undefined) : (sender
+        ? useChunked
+          ? putCiphertextChunked(forSenderFile.cipherBytes, {
+              pendingUploadId,
+              slot: "sender",
+              signal: controller.signal,
+              onProgress: (event) => {
+                senderLoaded = event.loaded || 0;
+                reportProgress();
+              },
+            })
+          : putCiphertext(senderBlob, file.name, {
+              pendingUploadId,
+              slot: "sender",
+              signal: controller.signal,
+              onProgress: (event) => {
+                senderLoaded = event.loaded || 0;
+                reportProgress();
+              },
+            })
+        : Promise.resolve(undefined));
+
+      // Recipient and sender ciphertext are independent objects server-side
+      // — concurrent upload roughly halves wall-clock time versus two full
+      // round trips back to back.
+      const [recipientDirectUploadId, senderDirectUploadId] = await Promise.all([
+        recipientUploadPromise,
+        senderUploadPromise,
+      ]);
+
+      let attachmentId = existingAttachmentId;
+      if (!attachmentId) {
+        const finalizeRes = await client.post(
+          "/attachments/finalize",
+          { pendingUploadId, clientUploadId: uploadId, recipientDirectUploadId, senderDirectUploadId },
+          { signal: controller.signal },
+        );
+        attachmentId = finalizeRes.data.data.id;
+        await updateOfflineMedia(user.id, uploadId, { finalizedAttachmentId: attachmentId });
+      }
 
       const forRecipient = sealMessage("", recipientPublicKey);
       const forSender = sealMessage("", myKey.publicKey);
       const msgBody = {
         to: selected.id,
+        clientMessageId: uploadId,
         forRecipient,
         forSender,
         attachmentId,
@@ -4536,12 +5267,14 @@ export default function Chat() {
       const forwardPolicy = buildForwardPolicy();
       if (forwardPolicy && !wantViewOnce) msgBody.forwardPolicy = forwardPolicy;
       const { data } = await client.post("/messages", msgBody);
+      await removeOfflineMedia(user.id, uploadId);
       recordActivityFromMessage(data.data);
-      setMessages((prev) => {
-        const id = String(data.data.id || data.data._id);
-        if (prev.some((m) => String(m.id || m._id) === id)) return prev;
-        return [...prev, decorate(data.data)];
-      });
+      setMessages((prev) => mergeConfirmedMessage(prev, {
+        tempId: pendingMessageId,
+        serverRaw: data.data,
+        displayText: file.name,
+      }));
+      void markMessageImportantIfNeeded(data.data);
       playSendSound();
       if (!quiet) showToast("File sent successfully", "success", 3000);
       setTimeout(() => scrollToBottom("smooth"), 50);
@@ -4556,11 +5289,46 @@ export default function Chat() {
           "error",
         );
       }
+      if (isRetryableSendError(err)) {
+        setMessages((prev) => prev.map((message) =>
+          String(message.id || message._id) === pendingMessageId
+            ? { ...message, _status: "waiting" }
+            : message,
+        ));
+      } else {
+        setMessages((prev) => prev.filter((message) => String(message.id || message._id) !== pendingMessageId));
+      }
     } finally {
       setUploads((prev) => prev.filter((u) => u.id !== uploadId));
     }
   }
 
+  async function retryOfflineMediaForSelection() {
+    if (!navigator.onLine || !user?.id || !selected?.key) return;
+    const entries = (await getOfflineMedia(user.id)).filter(
+      (entry) => entry.conversationKey === selected.key,
+    );
+    for (const entry of entries) {
+      const file = new File([entry.sourceBytes], entry.filename || 'attachment', {
+        type: entry.mimetype || 'application/octet-stream',
+      });
+      await sendAttachmentFile(file, {
+        plainBytes: entry.sourceBytes,
+        viewOnce: entry.viewOnce === true,
+        offlineId: entry.id,
+        skipOutbox: true,
+        offlineEntry: entry,
+        quiet: true,
+      });
+    }
+  }
+
+  useEffect(() => {
+    const retry = () => retryOfflineMediaForSelection().catch(() => {});
+    window.addEventListener('online', retry);
+    retry();
+    return () => window.removeEventListener('online', retry);
+  }, [selected?.key, user?.id]);
   async function sendAttachmentFiles(filesOrFile, { viewOnce = false } = {}) {
     const list = Array.isArray(filesOrFile)
       ? filesOrFile
@@ -4577,20 +5345,37 @@ export default function Chat() {
 
     let ok = 0;
     let failed = 0;
-    for (const file of files) {
-      try {
-        await sendAttachmentFile(file, { quiet: files.length > 1, viewOnce });
-        ok += 1;
-      } catch (err) {
-        failed += 1;
-        showToast(
-          err.response?.data?.error ||
-          err.message ||
-          `Failed to send ${file.name}`,
-          "error",
-        );
+    // A handful of files in flight at once — each does its own encryption
+    // (queued safely on the shared crypto worker) and its own upload, so
+    // this is a real speedup for a multi-photo batch without saturating
+    // the network the way, say, 20-at-once would.
+    const FILE_CONCURRENCY = 3;
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < files.length) {
+        const i = nextIndex;
+        nextIndex += 1;
+        const file = files[i];
+        try {
+          await sendAttachmentFile(file, { quiet: files.length > 1, viewOnce });
+          ok += 1;
+        } catch (err) {
+          failed += 1;
+          showToast(
+            err.response?.data?.error ||
+            err.message ||
+            `Failed to send ${file.name}`,
+            "error",
+          );
+        }
       }
     }
+
+    await Promise.all(
+      Array.from({ length: Math.min(FILE_CONCURRENCY, files.length) }, worker),
+    );
+
     if (files.length > 1 && ok > 0) {
       showToast(
         `${ok} file${ok === 1 ? "" : "s"} sent${failed ? `, ${failed} failed` : ""}`,
@@ -4622,21 +5407,63 @@ export default function Chat() {
     }
 
     if (mediaFiles.length) {
-      setMediaPreview({ files: mediaFiles, index: 0, viewOnce: false });
+      setMediaPreview({ files: mediaFiles, index: 0, viewOnce: false, compress: false });
+    }
+  }
+  // WhatsApp-style bulk send: commits every picked photo/video at once
+  // instead of tapping Send once per item. Deliberately skips per-item
+  // view-once/compress — those stay on the one-at-a-time flow below, since
+  // asking per-photo would defeat the point of a bulk action.
+  async function handleSendAllMedia() {
+    if (!mediaPreview || mediaPreviewSending || mediaCompressing) return;
+    const files = mediaPreview.files;
+    if (!files?.length) {
+      setMediaPreview(null);
+      return;
+    }
+    setMediaPreviewSending(true);
+    try {
+      await sendAttachmentFiles(files);
+    } finally {
+      setMediaPreviewSending(false);
+      setMediaPreview(null);
     }
   }
 
   async function handleMediaPreviewSend() {
-    if (!mediaPreview || mediaPreviewSending) return;
+    if (!mediaPreview || mediaPreviewSending || mediaCompressing) return;
     const file = mediaPreview.files[mediaPreview.index];
     if (!file) {
       setMediaPreview(null);
       return;
     }
 
+    let fileToSend = file;
+    if (mediaPreview.compress && String(file.type || "").startsWith("video/")) {
+      setMediaCompressing(true);
+      setMediaCompressProgress(0);
+      try {
+        fileToSend = await compressVideo(
+          file,
+          (progress) => setMediaCompressProgress(progress),
+          (phase) => setMediaCompressPhase(phase),
+        );
+      } catch (err) {
+        showToast(
+          err.message || "Compression failed — sending original video",
+          "error",
+        );
+        fileToSend = file;
+      } finally {
+        setMediaCompressing(false);
+        setMediaCompressProgress(0);
+        setMediaCompressPhase('encoding');
+      }
+    }
+
     setMediaPreviewSending(true);
     try {
-      await sendAttachmentFile(file, {
+      await sendAttachmentFile(fileToSend, {
         viewOnce: mediaPreview.viewOnce,
         quiet: mediaPreview.files.length > 1,
       });
@@ -4646,6 +5473,7 @@ export default function Chat() {
           files: mediaPreview.files,
           index: nextIndex,
           viewOnce: false,
+          compress: false,
         });
       } else {
         setMediaPreview(null);
@@ -4758,6 +5586,17 @@ export default function Chat() {
       items.findIndex((it) => it.id === String(id)),
     );
     setGallery({ items, index: index < 0 ? 0 : index });
+  }
+
+  function handleVideoReady(id, src, filename) {
+    if (!id || !src) return;
+    videoSrcMapRef.current.set(String(id), { src, alt: filename || "Video" });
+  }
+
+  function handleVideoPreview(id) {
+    const entry = videoSrcMapRef.current.get(String(id));
+    if (!entry) return;
+    setVideoPlayer({ src: entry.src, filename: entry.alt });
   }
 
   function clearRecordingResources({ keepChunks = false } = {}) {
@@ -4988,6 +5827,57 @@ export default function Chat() {
     setExtrasTick((n) => n + 1);
   }
 
+  async function handleImportantMessage(messageOrId) {
+    const messageId = String(messageOrId?.id || messageOrId?._id || messageOrId || '');
+    if (!messageId) return;
+    const message = typeof messageOrId === 'object'
+      ? messageOrId
+      : messages.find((candidate) => String(candidate.id || candidate._id) === messageId);
+    const previous = importantEntries;
+    const existing = previous.some((entry) => String(entry.id || entry._id) === messageId);
+
+    if (existing) {
+      const wasAutomatic = Boolean(getAutomaticImportantSource(message || previous.find((entry) => String(entry.id || entry._id) === messageId) || {}));
+      if (wasAutomatic) {
+        rememberAutoImportantRemoval(user.id, messageId);
+      }
+      setImportantEntries((current) => current.filter((entry) => String(entry.id || entry._id) !== messageId));
+      try {
+        await client.delete(`/messages/${messageId}/important`);
+        showToast('Removed from Important messages', 'success');
+      } catch (err) {
+        setImportantEntries(previous);
+        showToast(err.response?.data?.error || "Couldn't remove message. Try again.", 'error');
+      }
+      return;
+    }
+
+    clearAutoImportantRemoval(user.id, messageId);
+    const rawConversation = selected;
+    const optimistic = {
+      ...message,
+      id: messageId,
+      type: rawConversation?.type || (message?.group ? 'group' : 'dm'),
+      conversationId: rawConversation?.id || (message?.group ? message.group : message?.from),
+      conversationKey: rawConversation?.key || null,
+      title: rawConversation?.title || 'Chat',
+      isImportant: true,
+      important: true,
+      importantAt: new Date().toISOString(),
+      hasAttachment: Boolean(message?.attachment),
+      attachmentFilename: message?.attachment?.filename || null,
+      importantSource: getAutomaticImportantSource(message || {}),
+    };
+    setImportantEntries((current) => [optimistic, ...current]);
+    try {
+      await client.post(`/messages/${messageId}/important`);
+      showToast('Message saved to Important messages', 'success');
+    } catch (err) {
+      setImportantEntries(previous);
+      showToast(err.response?.data?.error || "Couldn't save message. Try again.", 'error');
+    }
+  }
+
   async function handlePinMessage(messageId) {
     if (!selected?.key) return;
     if (selected.type === "group") {
@@ -5099,9 +5989,11 @@ export default function Chat() {
         }
       }
 
-      const peer = resolveDmPeer(target);
       const myKey = pickRandom(getCurrentKeySet(user.id));
-      const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+      let recipientKeys = (resolveDmPeer(target)?.publicKeys || []).filter(Boolean);
+      if (recipientKeys.length === 0 && target) {
+        recipientKeys = await ensurePeerKeys(target);
+      }
       if (!myKey?.publicKey || recipientKeys.length === 0) {
         showToast("Missing encryption keys for this conversation", "error");
         return;
@@ -5220,8 +6112,10 @@ export default function Chat() {
         );
         recipientKeys = (member?.publicKeys || []).filter(Boolean);
       } else {
-        const peer = resolveDmPeer(selected);
-        recipientKeys = (peer?.publicKeys || []).filter(Boolean);
+        recipientKeys = (resolveDmPeer(selected)?.publicKeys || []).filter(Boolean);
+        if (recipientKeys.length === 0 && selected) {
+          recipientKeys = await ensurePeerKeys(selected);
+        }
       }
       if (!myKey?.publicKey || recipientKeys.length === 0) {
         showToast("Missing encryption keys for this conversation", "error");
@@ -5354,18 +6248,17 @@ export default function Chat() {
     if (themeCatalog && chatTheme.bubbleColorId && chatTheme.bubbleColorId !== 'default') {
       const bubble = themeCatalog.bubbleColors.find((b) => b.id === chatTheme.bubbleColorId);
       if (bubble) {
-        vars['--bubble-mine'] = bubble.mine;
-        // `fg` is optional on older catalog responses — falls back to the
-        // app theme's default (white in dark/eyecare, dark text in light)
-        // via the CSS `var(--bubble-mine-fg, ...)` fallback if omitted.
-        if (bubble.fg) {
-          vars['--bubble-mine-fg'] = bubble.fg;
-          vars['--bubble-mine-time'] = `color-mix(in srgb, ${bubble.fg} 78%, transparent)`;
-        }
+        // Must match `.message-bubble.mine` which reads `--bubble-mine-bg`
+        // (not `--bubble-mine`). Setting only fg left the cream dark-theme
+        // default background with white text — unreadable.
+        vars['--bubble-mine-bg'] = bubble.mine;
+        const fg = bubble.fg || '#ffffff';
+        vars['--bubble-mine-fg'] = fg;
+        vars['--bubble-mine-time'] = `color-mix(in srgb, ${fg} 78%, transparent)`;
       }
     }
     if (chatTheme.wallpaperId === 'custom' && customWallpaperUrl) {
-      vars['--chat-wallpaper'] = `url(${customWallpaperUrl})`;
+      vars['--chat-wallpaper'] = `url("${customWallpaperUrl}") center/cover no-repeat`;
     } else if (chatTheme.wallpaperId && chatTheme.wallpaperId !== 'none' && chatTheme.wallpaperId !== 'custom') {
       vars['--chat-wallpaper'] = getWallpaperBackground(chatTheme.wallpaperId);
     }
@@ -5411,7 +6304,7 @@ export default function Chat() {
     // Server already filtered presence by the peer's onlineStatus privacy.
     const presenceLabel = onlineUserIds.has(String(selected.id))
       ? "online"
-      : formatLastSeen(peer?.lastLoginAt);
+      : formatLastSeenLabel(peer?.lastLoginAt);
     const customStatus = (peer?.statusText || "").trim();
     if (customStatus) {
       return presenceLabel ? `${presenceLabel} · ${customStatus}` : customStatus;
@@ -5572,6 +6465,7 @@ export default function Chat() {
       applyConversationSelection(null);
     }
     setShowGroupSettings(false);
+    setShowCommandCenter(false);
     setProfileUserId(null);
   }
 
@@ -5579,11 +6473,9 @@ export default function Chat() {
     if (!selected || selected.type !== "dm") return false;
     if (selected.isSelfChat || String(selected.id) === String(user.id))
       return false;
-    const peer = resolveDmPeer(selected);
-    if (onlineUserIds.has(String(selected.id))) return true;
-    // Fallback only when socket presence hasn't arrived yet.
-    return isRecentlyActive(peer?.lastLoginAt);
-  }, [selected, resolveDmPeer, onlineUserIds, user.id]);
+    // Trust live presence only — lastLoginAt must not imply online.
+    return onlineUserIds.has(String(selected.id));
+  }, [selected, onlineUserIds, user.id]);
 
   const visibleMessages = useMemo(() => {
     const deleted = new Set(deletedForMeIds.map(String));
@@ -5670,7 +6562,11 @@ export default function Chat() {
         }}
         storiesRailRef={storiesRailRef}
         users={users}
-        onStoriesError={setError}
+        onStoriesError={(msg) => {
+          const text = String(msg || 'Something went wrong with your status');
+          setError(text);
+          showToast(text, 'error');
+        }}
         notifSettings={notifSettings}
         search={search}
         onSearchChange={setSearch}
@@ -5697,6 +6593,10 @@ export default function Chat() {
         }}
         onArchive={(c) => {
           setArchivedKeys(toggleArchiveChat(user.id, c.key));
+        }}
+        onPin={(c) => {
+          setPinnedChatKeys(togglePinChat(user.id, c.key));
+          showToast(c.pinned ? "Chat unpinned" : "Chat pinned", "info");
         }}
         onToggleVault={(c) => handleToggleVault(c.id)}
         loadingUsers={loadingUsers}
@@ -5773,7 +6673,15 @@ export default function Chat() {
             ? handleDrop
             : undefined
         }
+        style={selected ? themeStyle : undefined}
       >
+        {canChat && selected && themeStyle['--chat-wallpaper'] && (
+          <div
+            className="chat-wallpaper-layer"
+            data-wallpaper-fx={getWallpaperFx(chatTheme.wallpaperId) || undefined}
+            aria-hidden="true"
+          />
+        )}
         {!canChat && (
           <div className="key-unlock">
             <div className="key-unlock-card">
@@ -6016,7 +6924,14 @@ export default function Chat() {
                       </span>
                     )}
                     <div className="chat-header-text">
-                      <span className="chat-header-title">{title}</span>
+                      <span className="chat-header-title">
+                        {title}
+                        {screenshotProtectionOn ? (
+                          <span className="chat-screenshot-shield" title="Screenshot protection is active in this chat">
+                            Protected
+                          </span>
+                        ) : null}
+                      </span>
                       {headerSubtitle && (
                         <span
                           className={`chat-header-status ${headerOnline ? "status-online" : ""}`}
@@ -6102,14 +7017,24 @@ export default function Chat() {
                   <MessageSquare size={18} strokeWidth={2} aria-hidden="true" />
                 </button>
                 {selected?.type === "group" && (
-                  <button
-                    className="icon-btn chat-header-action-secondary"
-                    onClick={() => setShowGroupSettings(true)}
-                    title="Group settings"
-                    aria-label="Group settings"
-                  >
-                    <Settings2 size={18} strokeWidth={2} aria-hidden="true" />
-                  </button>
+                  <>
+                    <button
+                      className="icon-btn chat-header-action-secondary"
+                      onClick={() => setShowCommandCenter(true)}
+                      title="Command Center"
+                      aria-label="Command Center"
+                    >
+                      <LayoutDashboard size={18} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                    <button
+                      className="icon-btn chat-header-action-secondary"
+                      onClick={() => setShowGroupSettings(true)}
+                      title="Group settings"
+                      aria-label="Group settings"
+                    >
+                      <Settings2 size={18} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </>
                 )}
                 {selected && (
                   <button
@@ -6144,6 +7069,11 @@ export default function Chat() {
                         ? () => setShowGroupSettings(true)
                         : undefined
                     }
+                    onOpenCommandCenter={
+                      selected.type === "group"
+                        ? () => setShowCommandCenter(true)
+                        : undefined
+                    }
                     onToggleVault={
                       selected.type === "dm" && !selected.isSelfChat
                         ? () => handleToggleVault(selected.id)
@@ -6173,10 +7103,10 @@ export default function Chat() {
                     onClearChat={handleClearChat}
                     onSearch={() => setSearchOpen(true)}
                     onWallpaper={
-                      selected.type === "dm" && !selected.isSelfChat
-                        ? () => setThemeModalOpen(true)
-                        : undefined
-                    }
+  selected.type === "group" || (selected.type === "dm" && !selected.isSelfChat)
+    ? () => setThemeModalOpen(true)
+    : undefined
+}
                     onStarred={() => {
                       setStarredScope("chat");
                       setShowStarredMessages(true);
@@ -6221,7 +7151,7 @@ export default function Chat() {
                       >
                         <Pin size={12} />
                         <span>
-                          {m.text ||
+                          {getMessagePreviewText(m) ||
                             (m.attachment ? "Attachment" : "Pinned message")}
                         </span>
                       </button>
@@ -6242,12 +7172,10 @@ export default function Chat() {
                     className="message-list"
                     ref={messageListRef}
                     onScroll={handleScroll}
-                    data-wallpaper-fx={getWallpaperFx(chatTheme.wallpaperId) || undefined}
                     initial={{ opacity: 0, x: 12 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -12 }}
                     transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                    style={themeStyle}
                   >
                     {loadingOlder && (
                       <div className="load-older-hint">
@@ -6315,14 +7243,6 @@ export default function Chat() {
                             key={item.key}
                             id={`msg-${mid}`}
                             className="message-item"
-                            onDoubleClick={() => {
-                              // 1. Clear any edit state so we don't conflict
-                              setEditingMessage(null);
-                              // 2. Set the current message as the one we are replying to
-                              setReplyTo(m);
-                              // 3. Automatically put the user's cursor inside the text box!
-                              textareaRef.current?.focus();
-                            }}
                           >
                             <SwipeableMessage
                               message={m}
@@ -6330,20 +7250,20 @@ export default function Chat() {
                               onReply={(msg) => {
                                 setEditingMessage(null);
                                 setReplyTo(msg);
+                                textareaRef.current?.focus();
                               }}
                               onLongPress={(msg) => setActionSheetMessage(msg)}
                               onDoubleTap={(msg) => {
-                                const emoji = getLastQuickReaction();
-                                const mid = msg.id || msg._id;
-                                if (mid) {
-                                  setLastQuickReaction(emoji);
-                                  handleReactMessage(mid, emoji);
-                                }
+                                // Double-click / double-tap = reply only (not a quick reaction)
+                                setEditingMessage(null);
+                                setReplyTo(msg);
+                                textareaRef.current?.focus();
                               }}
                               currentUserId={user.id}
                               resolveSecretKey={resolveMySecretKey}
                               grouped={isGrouped}
                               starred={starredIds.map(String).includes(mid)}
+                              important={importantEntries.some((entry) => String(entry.id || entry._id) === mid)}
                               pinned={pinnedIds.map(String).includes(mid)}
                               showReadReceipts={
                                 user.privacy?.readReceipts !== false &&
@@ -6368,7 +7288,9 @@ export default function Chat() {
                                       usernameById.get(
                                         String(m.replyTo.from),
                                       ) || "Message",
-                                    text: m.replyTo.text || "[encrypted]",
+                                    text:
+                                      getMessagePreviewText(m.replyTo) ||
+                                      (m.replyTo.attachment ? "[Attachment]" : "[encrypted]"),
                                   }
                                   : null
                               }
@@ -6381,6 +7303,7 @@ export default function Chat() {
                               onCopy={handleCopyMessage}
                               onForward={setForwardMessage}
                               onStar={handleStarMessage}
+                              onImportant={handleImportantMessage}
                               onPin={handlePinMessage}
                               onVotePoll={
                                 isGroupChat ? handleVotePoll : undefined
@@ -6388,6 +7311,8 @@ export default function Chat() {
                               onJumpToReply={handleJumpToReply}
                               onImagePreview={handleImagePreview}
                               onImageReady={handleImageReady}
+                              onVideoPreview={handleVideoPreview}
+                              onVideoReady={handleVideoReady}
                               onBurnViewOnce={handleBurnViewOnce}
                               onShowInfo={handleShowMessageInfo}
                               onShowEditHistory={handleShowEditHistory}
@@ -6548,8 +7473,9 @@ export default function Chat() {
                           </strong>
                           <span>
                             {editingMessage
-                              ? editingMessage.text || ""
-                              : replyTo?.text || "[encrypted message]"}
+                              ? getMessagePreviewText(editingMessage) || ""
+                              : getMessagePreviewText(replyTo) ||
+                                (replyTo?.attachment ? "[Attachment]" : "[encrypted message]")}
                           </span>
                         </div>
                         <button
@@ -6623,7 +7549,7 @@ export default function Chat() {
                                   style={{
                                     fontSize: 11,
                                     fontWeight: 600,
-                                    color: "#b45309",
+                                    color: "var(--warning-text, #fbbf24)",
                                   }}
                                 >
                                   {reason === "mentions_off"
@@ -6744,15 +7670,16 @@ export default function Chat() {
           </>
         )}
       </main>
-      {themeModalOpen && selected && (
-        <ChatThemeModal
-          peerId={selected.id}
-          theme={chatTheme}
-          catalog={themeCatalog}
-          onApplied={(updated) => setChatTheme(updated)}
-          onClose={() => setThemeModalOpen(false)}
-        />
-      )}
+      {themeModalOpen && selected && (selected.type === "dm" || selected.type === "group") && (
+  <ChatThemeModal
+    peerId={selected.type === "dm" ? selected.id : undefined}
+    groupId={selected.type === "group" ? selected.id : undefined}
+    theme={chatTheme}
+    catalog={themeCatalog}
+    onApplied={(updated) => setChatTheme(updated)}
+    onClose={() => setThemeModalOpen(false)}
+  />
+)}
 
       {aiPanelOpen && (
         <AIAssistantPanel
@@ -6901,16 +7828,40 @@ export default function Chat() {
       )}
 
       {showGroupSettings && activeGroup && (
-        <GroupSettingsModal
+  <GroupSettingsModal
+    group={activeGroup}
+    currentUserId={user.id}
+    users={users}
+    onClose={() => setShowGroupSettings(false)}
+    onUpdated={mergeUpdatedGroup}
+    onLeftOrDeleted={handleLeftOrDeletedGroup}
+    onOpenChatTheme={() => {
+      setShowGroupSettings(false);
+      setThemeModalOpen(true);
+    }}
+  />
+)}
+      {showCommandCenter && activeGroup && (
+        <GroupCommandCenter
           group={activeGroup}
+          messages={messages}
           currentUserId={user.id}
-          users={users}
-          onClose={() => setShowGroupSettings(false)}
+          onClose={() => setShowCommandCenter(false)}
           onUpdated={mergeUpdatedGroup}
-          onLeftOrDeleted={handleLeftOrDeletedGroup}
+          onJumpToMessage={(messageId) => setPendingJumpMessageId(String(messageId))}
+          onOpenGroupSettings={() => {
+            setShowCommandCenter(false);
+            setShowGroupSettings(true);
+          }}
+          onAskAiSummary={() => {
+            setDraft(
+              "@QuantumAI Please summarize this group: key announcements, open tasks, upcoming events, and recent decisions.",
+            );
+            setShowCommandCenter(false);
+            showToast("Review the draft, then send to ask QuantumAI", "info");
+          }}
         />
       )}
-
       {profileUserId && (
         <UserProfileModal
           userId={profileUserId}
@@ -7006,9 +7957,17 @@ export default function Chat() {
         <ChatMediaModal
           messages={visibleMessages}
           imageSrcMap={imageSrcMapRef.current}
+          videoSrcMap={videoSrcMapRef.current}
+          resolveSecretKey={resolveMySecretKey}
+          onImageReady={handleImageReady}
+          onVideoReady={handleVideoReady}
           onImageClick={(id) => {
             setShowChatMedia(false);
             handleImagePreview(id);
+          }}
+          onVideoClick={(id) => {
+            setShowChatMedia(false);
+            handleVideoPreview(id);
           }}
           onClose={() => setShowChatMedia(false)}
         />
@@ -7252,18 +8211,28 @@ export default function Chat() {
       {showStarredMessages && (
         <StarredMessagesModal
           entries={
-            starredScope === 'chat' && selected
-              ? getStarredEntries(user.id).filter((e) => e.conversationKey === selected.key)
-              : getStarredEntries(user.id)
+            (starredScope === 'chat' && selected
+              ? [...importantEntries, ...getStarredEntries(user.id)].filter((e) => e.conversationKey === selected.key)
+              : [...importantEntries, ...getStarredEntries(user.id)])
           }
           usernameById={usernameById}
           currentUserId={user.id}
           onSelect={handleOpenStarredEntry}
+          onCopy={(entry) => {
+            const text = entry?.text || (entry?.attachmentFilename ? `[${entry.attachmentFilename}]` : '');
+            if (!text) return;
+            navigator.clipboard?.writeText(text).then(
+              () => showToast('Copied to clipboard', 'success'),
+              () => showToast('Could not copy message', 'error'),
+            );
+          }}
           onUnstar={(id) => {
             const nextIds = toggleStarredMessage(user.id, { id }, null);
             setStarredIds(nextIds);
             setExtrasTick((n) => n + 1);
           }}
+          onRemoveImportant={handleImportantMessage}
+          loading={importantLoading}
           onClose={() => {
             setShowStarredMessages(false);
             setStarredScope('all');
@@ -7310,6 +8279,15 @@ export default function Chat() {
         }}
       />
 
+      <TimeCapsuleModal
+  open={showCapsulePicker}
+  onCancel={() => setShowCapsulePicker(false)}
+  onConfirm={(iso) => {
+    setCapsuleUnlocksAt(iso);
+    setShowCapsulePicker(false);
+  }}
+/>
+
       <ImageLightbox
         isOpen={Boolean(gallery)}
         items={gallery?.items || []}
@@ -7319,6 +8297,32 @@ export default function Chat() {
         }
         onClose={() => setGallery(null)}
       />
+
+      {videoPlayer && (
+        <div
+          className="lightbox-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setVideoPlayer(null)}
+        >
+          <button
+            type="button"
+            className="lightbox-close"
+            onClick={() => setVideoPlayer(null)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+          <video
+            src={videoPlayer.src}
+            controls
+            autoPlay
+            playsInline
+            className="lightbox-image"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       <MediaSendPreview
         open={Boolean(mediaPreview?.files?.length)}
@@ -7331,9 +8335,19 @@ export default function Chat() {
             prev ? { ...prev, viewOnce: !prev.viewOnce } : prev,
           )
         }
+        compress={Boolean(mediaPreview?.compress)}
+        onToggleCompress={() =>
+          setMediaPreview((prev) =>
+            prev ? { ...prev, compress: !prev.compress } : prev,
+          )
+        }
+        compressing={mediaCompressing}
+        compressProgress={mediaCompressProgress}
+        compressPhase={mediaCompressPhase}
         onSend={handleMediaPreviewSend}
-        onClose={() => !mediaPreviewSending && setMediaPreview(null)}
-        sending={mediaPreviewSending}
+        onSendAll={handleSendAllMedia}
+        onClose={() => !mediaPreviewSending && !mediaCompressing && setMediaPreview(null)}
+        sending={mediaPreviewSending || mediaCompressing}
       />
 
       <ComposerPlusSheet
@@ -7360,6 +8374,8 @@ export default function Chat() {
           const i = steps.indexOf(disappearSeconds);
           setDisappearSeconds(steps[(i + 1) % steps.length]);
         }}
+        onTimeCapsule={() => setShowCapsulePicker(true)}
+        capsuleActive={Boolean(capsuleUnlocksAt)}
         allowForward={allowForward}
         onToggleForward={() => setAllowForward((v) => !v)}
         forwardUntilSeconds={forwardUntilSeconds}
@@ -7414,6 +8430,13 @@ export default function Chat() {
               )
             : false
         }
+        important={
+          actionSheetMessage
+            ? importantEntries.some(
+              (entry) => String(entry.id || entry._id) === String(actionSheetMessage.id || actionSheetMessage._id),
+            )
+            : false
+        }
         pinned={
           actionSheetMessage
             ? pinnedIds
@@ -7453,9 +8476,24 @@ export default function Chat() {
           handleDeleteMessage(msg?.id || msg?._id || msg)
         }
         onStar={(msg) => handleStarMessage(msg?.id || msg?._id || msg)}
+        onImportant={handleImportantMessage}
         onPin={(msg) => handlePinMessage(msg?.id || msg?._id || msg)}
         onShowInfo={handleShowMessageInfo}
       />
+
+      {capsuleUnlocksAt && (
+  <div className="capsule-picker-row">
+    <span>⏳ Unlocks {new Date(capsuleUnlocksAt).toLocaleString()}</span>
+    <button
+      type="button"
+      className="capsule-picker-close"
+      title="Cancel time capsule"
+      onClick={() => setCapsuleUnlocksAt("")}
+    >
+      <X size={16} />
+    </button>
+  </div>
+)}
 
       {!isCompactChrome && (
         <InfoPanel
@@ -7465,6 +8503,7 @@ export default function Chat() {
           users={users}
           onOpenProfile={setProfileUserId}
           onOpenGroupSettings={() => setShowGroupSettings(true)}
+          onOpenCommandCenter={() => setShowCommandCenter(true)}
         >
           {selected?.type === "dm" &&
             !selected.isSelfChat &&
@@ -7503,6 +8542,10 @@ export default function Chat() {
             onOpenGroupSettings={() => {
               closeInfoPanel();
               setShowGroupSettings(true);
+            }}
+            onOpenCommandCenter={() => {
+              closeInfoPanel();
+              setShowCommandCenter(true);
             }}
           >
             {selected?.type === "dm" &&
