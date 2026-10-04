@@ -4530,6 +4530,11 @@ useEffect(() => {
         "error",
       );
       throw err;
+    } finally {
+      // Always clear busy — otherwise the UI stays on "generating…" and
+      // further sends show "QuantumAI is already responding".
+      setAiBusy(false);
+      aiAbortRef.current = null;
     }
   }
 
