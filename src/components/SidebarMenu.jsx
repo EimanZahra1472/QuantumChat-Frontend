@@ -4,6 +4,7 @@ import { CheckCheck, Lock, LogOut, MoreVertical, Settings, Star, Unlock } from '
 import { Clock, Cake } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { preload } from '../utils/preload.js';
 
 export default function SidebarMenu({
   onSettings,
@@ -127,6 +128,9 @@ export default function SidebarMenu({
               type="button"
               className="sidebar-menu-item"
               role="menuitem"
+              onMouseEnter={() => preload('settings')}
+              onFocus={() => preload('settings')}
+              onTouchStart={() => preload('settings')}
               onClick={() => {
                 setOpen(false);
                 onSettings?.();
