@@ -110,9 +110,10 @@ export async function resolveSealedAttachment({
   if (existing) return existing;
 
   const promise = (async () => {
+    // The in-flight request is shared across bubbles; one consumer's cleanup
+    // must not abort the request every other consumer is awaiting.
     const res = await client.get(`/attachments/${attachmentId}/raw`, {
       responseType: 'arraybuffer',
-      signal,
       timeout: 90_000,
     });
     const plainBytes = unsealBytes(new Uint8Array(res.data), envelope, secretKey);
@@ -159,7 +160,6 @@ export async function resolveGroupAttachment({
   const promise = (async () => {
     const res = await client.get(`/attachments/${attachmentId}/raw`, {
       responseType: 'arraybuffer',
-      signal,
       timeout: 90_000,
     });
     const plain = openFn(new Uint8Array(res.data), nonce, keyB64);
