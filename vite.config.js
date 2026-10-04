@@ -11,6 +11,15 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  // Whisper (@huggingface/transformers) imports onnxruntime-common from the
+  // browser bundle; keep it deduped at the app root (we stub onnxruntime-node
+  // for CI, which used to hoist a copy of onnxruntime-common).
+  resolve: {
+    dedupe: ['onnxruntime-common', 'onnxruntime-web'],
+  },
+  optimizeDeps: {
+    include: ['onnxruntime-common', 'onnxruntime-web'],
+  },
   server: {
     port: 5173,
     open: true,
