@@ -327,5 +327,11 @@
     "forgotPassword": "Passwort vergessen?",
     "twoFactorPrompt": "Geben Sie den 6-stelligen Code aus Ihrer Authentifikator-App ein",
     "verifyCode": "Code bestätigen"
+  },
+  "lazy": {
+    "loadFailed": "Komponente konnte nicht geladen werden",
+    "loadFailedDesc": "Ein Netzwerkfehler ist aufgetreten oder ein Update ist verfügbar.",
+    "retry": "Wiederholen",
+    "reloadPage": "Seite neu laden"
   }
 }

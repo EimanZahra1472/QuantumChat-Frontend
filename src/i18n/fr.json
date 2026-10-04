@@ -327,5 +327,11 @@
     "forgotPassword": "Mot de passe oublié ?",
     "twoFactorPrompt": "Entrez le code à 6 chiffres de votre application d'authentification",
     "verifyCode": "Vérifier le code"
+  },
+  "lazy": {
+    "loadFailed": "Échec du chargement du composant",
+    "loadFailedDesc": "Une erreur réseau est survenue ou une mise à jour est disponible.",
+    "retry": "Réessayer",
+    "reloadPage": "Recharger la page"
   }
 }

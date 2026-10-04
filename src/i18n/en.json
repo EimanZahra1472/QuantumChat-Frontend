@@ -332,5 +332,11 @@
     "forgotPassword": "Forgot password?",
     "twoFactorPrompt": "Enter the 6-digit authentication code",
     "verifyCode": "Verify Code"
+  },
+  "lazy": {
+    "loadFailed": "Failed to load component",
+    "loadFailedDesc": "A network error occurred or a new version is available.",
+    "retry": "Retry",
+    "reloadPage": "Reload page"
   }
 }

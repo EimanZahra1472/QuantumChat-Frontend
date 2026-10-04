@@ -327,5 +327,11 @@
     "forgotPassword": "¿Olvidaste tu contraseña?",
     "twoFactorPrompt": "Introduce el código de 6 dígitos de tu aplicación de autenticación",
     "verifyCode": "Verificar código"
+  },
+  "lazy": {
+    "loadFailed": "Error al cargar el componente",
+    "loadFailedDesc": "Ocurrió un error de red o hay una nueva versión disponible.",
+    "retry": "Reintentar",
+    "reloadPage": "Recargar página"
   }
 }

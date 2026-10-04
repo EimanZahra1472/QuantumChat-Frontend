@@ -327,5 +327,11 @@
     "forgotPassword": "Şifrenizi mi unuttunuz?",
     "twoFactorPrompt": "Uygulamanızdaki 6 haneli doğrulama kodunu girin",
     "verifyCode": "Kodu Doğrula"
+  },
+  "lazy": {
+    "loadFailed": "Bileşen yüklenemedi",
+    "loadFailedDesc": "Bir ağ hatası oluştu veya yeni bir sürüm mevcut.",
+    "retry": "Tekrar dene",
+    "reloadPage": "Sayfayı yenile"
   }
 }

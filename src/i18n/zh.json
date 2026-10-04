@@ -327,5 +327,11 @@
     "forgotPassword": "忘记密码？",
     "twoFactorPrompt": "输入身份验证器应用中的 6 位动态验证码",
     "verifyCode": "验证并登录"
+  },
+  "lazy": {
+    "loadFailed": "组件加载失败",
+    "loadFailedDesc": "发生网络错误或有新版本可用。",
+    "retry": "重试",
+    "reloadPage": "重新加载页面"
   }
 }
