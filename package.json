@@ -41,6 +41,7 @@
     "vite": "^5.3.4"
   },
   "overrides": {
-    "socket.io-parser": ">=4.2.7"
+    "socket.io-parser": ">=4.2.7",
+    "onnxruntime-node": "npm:empty-npm-package@1.0.0"
   }
 }

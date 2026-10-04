@@ -17,7 +17,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Whisper uses @huggingface/transformers → onnxruntime-web in the browser.
+      # Skip onnxruntime-node's postinstall CDN download (often ETIMEDOUT on runners).
       - run: npm ci
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
       - name: Crypto unit tests (E2E seal/unseal invariants)
         run: npm run test:crypto
       - run: npm run build
