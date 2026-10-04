@@ -22,6 +22,8 @@
     "lucide-react": "^1.24.0",
     "mp4-muxer": "^5.2.2",
     "mp4box": "^2.4.1",
+    "onnxruntime-common": "^1.31.0-dev.20260911-2a43ec07e",
+    "onnxruntime-web": "^1.31.0-dev.20260914-8d85527a0",
     "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
@@ -41,6 +43,7 @@
     "vite": "^5.3.4"
   },
   "overrides": {
-    "socket.io-parser": ">=4.2.7"
+    "socket.io-parser": ">=4.2.7",
+    "onnxruntime-node": "npm:empty-npm-package@1.0.0"
   }
 }

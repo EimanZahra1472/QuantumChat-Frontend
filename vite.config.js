@@ -11,12 +11,21 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  // Whisper (@huggingface/transformers) imports onnxruntime-common from the
+  // browser bundle; keep it deduped at the app root (we stub onnxruntime-node
+  // for CI, which used to hoist a copy of onnxruntime-common).
+  resolve: {
+    dedupe: ['onnxruntime-common', 'onnxruntime-web'],
+  },
+  optimizeDeps: {
+    include: ['onnxruntime-common', 'onnxruntime-web'],
+  },
   server: {
     port: 5173,
     open: true,
     proxy: {
       '/quantum-ai': {
-        target: process.env.VITE_AI_PROXY_TARGET || 'https://quantum-ai-backend-six.vercel.app',
+        target: process.env.VITE_AI_PROXY_TARGET || 'https://ai.quantumlogicslimited.com',
         changeOrigin: true,
         secure: true,
         rewrite: (path) => path.replace(/^\/quantum-ai/, '/api/v1'),
