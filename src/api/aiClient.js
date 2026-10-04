@@ -101,6 +101,7 @@ export async function streamQuantumAI({
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
+    const detail = String(body.error || body.message || '');
     if (response.status === 401) {
       throw new Error(
         'QuantumAI rejected your login token — set the same JWT_SECRET on QuantumChat backend and Quantum-AI-Backend, then log out and log in again',
@@ -109,14 +110,17 @@ export async function streamQuantumAI({
     if (response.status === 429) {
       throw new Error('QuantumAI rate limit reached — try again in a few minutes');
     }
-    if (response.status >= 500) {
+    if (/llama-3\.3-70b|does not exist|model_not_found/i.test(detail)) {
       throw new Error(
-        body.error ||
-          body.message ||
-          'QuantumAI server error — check GROQ_API_KEY on the AI backend',
+        'QuantumAI model is outdated on the server — set GROQ_CHAT_MODEL=openai/gpt-oss-120b on the AI backend and redeploy',
       );
     }
-    throw new Error(body.error || body.message || `QuantumAI request failed (${response.status})`);
+    if (response.status >= 500) {
+      throw new Error(
+        detail || 'QuantumAI server error — check GROQ_API_KEY and GROQ_CHAT_MODEL on the AI backend',
+      );
+    }
+    throw new Error(detail || `QuantumAI request failed (${response.status})`);
   }
   const reader = response.body?.getReader();
   if (!reader) throw new Error('QuantumAI stream is unavailable');
@@ -141,7 +145,15 @@ export async function streamQuantumAI({
       if (event === 'start') onStart?.(data.conversationId);
       if (event === 'chunk') onChunk?.(data.content || '');
       if (event === 'done') onDone?.(data);
-      if (event === 'error') throw new Error(data.message || 'QuantumAI stream failed');
+      if (event === 'error') {
+        const message = String(data.message || 'QuantumAI stream failed');
+        if (/llama-3\.3-70b|does not exist|model_not_found/i.test(message)) {
+          throw new Error(
+            'QuantumAI model is outdated on the server — set GROQ_CHAT_MODEL=openai/gpt-oss-120b on the AI backend and redeploy',
+          );
+        }
+        throw new Error(message);
+      }
     }
   }
 }

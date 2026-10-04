@@ -13,7 +13,7 @@ export default defineConfig({
     open: true,
     proxy: {
       '/quantum-ai': {
-        target: process.env.VITE_AI_PROXY_TARGET || 'https://ai.quantumlogicslimited.com',
+        target: process.env.VITE_AI_PROXY_TARGET || 'https://quantum-ai-backend-six.vercel.app',
         changeOrigin: true,
         secure: true,
         rewrite: (path) => path.replace(/^\/quantum-ai/, '/api/v1'),

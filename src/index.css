@@ -318,6 +318,17 @@
   word-break: break-all;
 }
 
+.ai-panel-error {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #991b1b;
+  background: color-mix(in srgb, #fecaca 70%, transparent);
+  border: 1px solid color-mix(in srgb, #f87171 55%, transparent);
+}
+
 .ai-panel-answer {
   flex: 1;
   overflow: auto;
