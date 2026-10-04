@@ -60,6 +60,12 @@
   },
   "settings": {
     "title": "Settings",
+    "preview": {
+      "title": "Chat Preview",
+      "receivedSample": "Hey! How does the new theme look?",
+      "sentSample": "Looks crisp and smooth! ✨",
+      "composerPlaceholder": "Type a message…"
+    },
     "language": {
       "title": "Language & Region",
       "subtitle": "Choose your interface language",

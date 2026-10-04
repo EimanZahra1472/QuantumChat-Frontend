@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "Paramètres",
+    "preview": {
+      "title": "Aperçu de la discussion",
+      "receivedSample": "Salut ! Comment trouves-tu le nouveau thème ?",
+      "sentSample": "Très net et fluide ! ✨",
+      "composerPlaceholder": "Écrire un message…"
+    },
     "language": {
       "title": "Langue et région",
       "subtitle": "Choisissez la langue de l'interface",

@@ -1,0 +1,295 @@
+/* ==========================================================================
+   SettingsModal Two-Column Upgrade (.qc-settings-*)
+   Responsive Two-Column Desktop Layout (> 768px) + Accessible Tablist.
+   Token-driven (Emerald & Champagne), RTL-ready with logical CSS properties.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Desktop Layout (> 768px): Two-Column Split
+   -------------------------------------------------------------------------- */
+@media (min-width: 769px) {
+  .settings-modal.qc-settings-modal {
+    width: min(960px, calc(100vw - 48px)) !important;
+    height: min(85vh, 780px) !important;
+    max-height: 85vh !important;
+    display: grid !important;
+    grid-template-columns: 240px 1fr !important;
+    grid-template-rows: 1fr !important;
+    padding: 0 !important;
+    border-radius: var(--qc-radius-lg, 20px) !important;
+    overflow: hidden !important;
+    box-shadow: var(--shadow-lg) !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-subtle) !important;
+  }
+
+  /* Hide mobile-only elements */
+  .qc-settings-mobile-header,
+  .qc-settings-mobile-search {
+    display: none !important;
+  }
+
+  /* Left Sidebar */
+  .qc-settings-sidebar {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 240px !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    background: color-mix(in srgb, var(--bg-surface) 90%, var(--bg-body)) !important;
+    border-inline-end: 1px solid var(--border-subtle) !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  .qc-settings-sidebar-header {
+    padding: 20px 16px 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .qc-settings-brand-title {
+    margin: 0 !important;
+    font-size: 1.25rem !important;
+    font-weight: 700 !important;
+    color: var(--text-primary) !important;
+    letter-spacing: -0.02em !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .qc-settings-search-bar {
+    position: relative !important;
+    width: 100% !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .qc-settings-search-icon {
+    position: absolute !important;
+    inset-inline-start: 10px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    color: var(--text-muted) !important;
+    pointer-events: none !important;
+  }
+
+  .qc-settings-search-input {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding-block: 7px !important;
+    padding-inline-start: 32px !important;
+    padding-inline-end: 12px !important;
+    border-radius: var(--qc-radius-sm, 8px) !important;
+    border: 1px solid var(--border-subtle) !important;
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+    font-size: 0.82rem !important;
+    outline: none !important;
+    transition: border-color 150ms ease, box-shadow 150ms ease !important;
+  }
+
+  .qc-settings-search-input:focus-visible {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px var(--accent-muted) !important;
+  }
+
+  /* Vertical Navigation Tablist */
+  .qc-settings-nav {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 4px !important;
+    padding: 8px 12px 16px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    border-bottom: none !important;
+    background: transparent !important;
+    scroll-snap-type: none !important;
+  }
+
+  .qc-settings-tab-item {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    padding-block: 9px !important;
+    padding-inline: 12px !important;
+    border-radius: var(--qc-radius-sm, 8px) !important;
+    border: 1px solid transparent !important;
+    border-inline-start: 3px solid transparent !important;
+    background: transparent !important;
+    color: var(--text-secondary) !important;
+    font-size: 0.86rem !important;
+    font-weight: 550 !important;
+    text-align: start !important;
+    cursor: pointer !important;
+    transition:
+      background 150ms ease,
+      color 150ms ease,
+      border-color 150ms ease !important;
+    position: relative !important;
+    box-sizing: border-box !important;
+  }
+
+  .qc-settings-tab-item:hover {
+    color: var(--text-primary) !important;
+    background: color-mix(in srgb, var(--accent) 8%, transparent) !important;
+  }
+
+  .qc-settings-tab-item:focus-visible {
+    outline: 2px solid var(--accent) !important;
+    outline-offset: -2px !important;
+  }
+
+  .qc-settings-tab-item.active {
+    color: var(--accent) !important;
+    font-weight: 700 !important;
+    background: var(--accent-muted) !important;
+    border-inline-start-color: var(--accent) !important;
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent) !important;
+    box-shadow: var(--shadow-sm) !important;
+  }
+
+  .qc-settings-tab-icon {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  .qc-settings-tab-icon svg {
+    display: block !important;
+  }
+
+  .qc-settings-tab-label {
+    flex: 1 1 auto !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  /* Right Column (Content Pane) */
+  .qc-settings-main {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    position: relative !important;
+    background: var(--bg-surface) !important;
+  }
+
+  .qc-settings-desktop-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 18px 24px 14px !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
+    background: var(--bg-surface) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+    flex-shrink: 0 !important;
+  }
+
+  .qc-settings-active-title {
+    margin: 0 !important;
+    font-size: 1.25rem !important;
+    font-weight: 700 !important;
+    color: var(--text-primary) !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  .qc-settings-active-subtitle {
+    margin: 4px 0 0 !important;
+    font-size: 0.82rem !important;
+    color: var(--text-muted) !important;
+    line-height: 1.4 !important;
+  }
+
+  .qc-settings-close-btn {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: var(--qc-radius-sm, 8px) !important;
+    display: grid !important;
+    place-items: center !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    color: var(--text-muted) !important;
+    cursor: pointer !important;
+    transition: background 150ms ease, color 150ms ease !important;
+  }
+
+  .qc-settings-close-btn:hover {
+    background: var(--accent-muted) !important;
+    color: var(--accent) !important;
+  }
+
+  .qc-settings-content-body {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    padding: 20px 24px 28px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+    min-height: 0 !important;
+  }
+
+  /* Smooth 150ms content fade-in */
+  .qc-settings-content-body > section {
+    animation: qc-settings-fade-in 150ms ease-out;
+  }
+
+  @keyframes qc-settings-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .qc-settings-content-body > section {
+      animation: none !important;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Mobile Layout (<= 768px): Retain 100% current single-column UX
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .qc-settings-sidebar-header,
+  .qc-settings-desktop-header {
+    display: none !important;
+  }
+
+  .qc-settings-sidebar {
+    display: contents !important;
+  }
+
+  .qc-settings-main {
+    display: contents !important;
+  }
+
+  .qc-settings-mobile-header {
+    display: flex !important;
+  }
+
+  .qc-settings-mobile-search {
+    display: block !important;
+  }
+}

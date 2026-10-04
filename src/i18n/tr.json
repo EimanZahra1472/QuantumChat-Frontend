@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "Ayarlar",
+    "preview": {
+      "title": "Sohbet Önizlemesi",
+      "receivedSample": "Selam! Yeni tema nasıl görünüyor?",
+      "sentSample": "Harika ve çok akıcı görünüyor! ✨",
+      "composerPlaceholder": "Bir mesaj yazın…"
+    },
     "language": {
       "title": "Dil ve Bölge",
       "subtitle": "Arayüz dilinizi seçin",

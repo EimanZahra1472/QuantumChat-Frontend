@@ -13,6 +13,7 @@ import {
   uploadGroupWallpaperImage,
 } from '../api/chatThemes.js';
 import { getWallpaperThumbnail, preloadWallpaper } from '../theme/wallpaperBackgrounds.js';
+import ThemePreviewCard from './ThemePreviewCard.jsx';
 
 const MAX_WALLPAPER_BYTES = 10 * 1024 * 1024;
 
@@ -189,6 +190,12 @@ export default function ChatThemeModal({ peerId, groupId, theme, catalog: catalo
         </div>
 
         {error && <div className="auth-error">{error}</div>}
+
+        <ThemePreviewCard
+          wallpaperId={theme.wallpaperId}
+          customWallpaperUrl={customWallpaperUrl}
+          bubbleColor={currentBubble}
+        />
 
         <p className="theme-section-label">Themes</p>
         <div className="theme-preset-grid">

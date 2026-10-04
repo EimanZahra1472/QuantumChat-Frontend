@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "Настройки",
+    "preview": {
+      "title": "Предпросмотр чата",
+      "receivedSample": "Привет! Как тебе новая тема?",
+      "sentSample": "Выглядит четко и плавно! ✨",
+      "composerPlaceholder": "Введите сообщение…"
+    },
     "language": {
       "title": "Язык и регион",
       "subtitle": "Выберите язык интерфейса",

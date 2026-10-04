@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "تنظیمات",
+    "preview": {
+      "title": "پیش‌نمایش گفتگو",
+      "receivedSample": "سلام! پوسته جدید چطوره؟",
+      "sentSample": "بسیار شیک و روان به نظر می‌رسد! ✨",
+      "composerPlaceholder": "پیامی بنویسید…"
+    },
     "language": {
       "title": "زبان و منطقه",
       "subtitle": "زبان رابط کاربری را انتخاب کنید",

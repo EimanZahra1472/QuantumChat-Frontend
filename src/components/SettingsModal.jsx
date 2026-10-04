@@ -34,6 +34,9 @@ import DeviceLinkSetupModal from './DeviceLinkSetupModal.jsx';
 import ThemeSwitcher, { FunThemeSwitcher } from './ThemeSwitcher.jsx';
 import PrivacySelect from './ui/PrivacySelect.jsx';
 import UserAvatar, { bustAvatarCache } from './UserAvatar.jsx';
+import ToggleSwitch from './ToggleSwitch.jsx';
+import ThemePreviewCard from './ThemePreviewCard.jsx';
+import './SettingsModal.css';
 
 function parseMutedKey(key, myId) {
   if (!key) return null;
@@ -57,11 +60,10 @@ function formatMuteExpiry(expiresAt) {
 
 function ToggleRow({ label, hint, checked, onChange, disabled, className = '', showStatusBadge = false }) {
   return (
-    <button
-      type="button"
+    <div
       className={`settings-row ${className}`.trim()}
       onClick={() => !disabled && onChange?.(!checked)}
-      disabled={disabled}
+      style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
     >
       <span className="settings-row-left">
         <span className="settings-row-label">{label}</span>
@@ -73,11 +75,14 @@ function ToggleRow({ label, hint, checked, onChange, disabled, className = '', s
             {checked ? 'Enabled' : 'Off'}
           </span>
         )}
-        <span className={`menu-switch ${checked ? 'on' : ''}`} aria-hidden="true">
-          <span className="menu-switch-knob" />
-        </span>
+        <ToggleSwitch
+          checked={checked}
+          onChange={(val) => !disabled && onChange?.(val)}
+          disabled={disabled}
+          label={label}
+        />
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -119,10 +124,123 @@ export default function SettingsModal({
   const { importKeys, keyringSync, keyringNeedsResync, verifyKeySync } = useAuth();
   const { settings: notifSettings, updateSettings: updateNotifSettings } = useNotificationSettings();
   const closeRef = useRef(null);
+  const closeMobileRef = useRef(null);
   const keyInputRef = useRef(null);
   const avatarInputRef = useRef(null);
   const [tab, setTab] = useState(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const TAB_ITEMS = [
+    {
+      id: 'profile',
+      label: t('settings.tabs.profile', 'Profile'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+      ),
+    },
+    {
+      id: 'privacy',
+      label: t('settings.tabs.privacy', 'Privacy'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'notifications',
+      label: t('settings.tabs.notifications', 'Notifications'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
+      ),
+    },
+    {
+      id: 'security',
+      label: t('settings.tabs.security', 'Security'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+      ),
+    },
+    {
+      id: 'blocked',
+      label: t('settings.tabs.blocked', 'Blocked'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+        </svg>
+      ),
+    },
+    {
+      id: 'data',
+      label: t('settings.tabs.data', 'Data'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <ellipse cx="12" cy="5" rx="9" ry="3" />
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+        </svg>
+      ),
+    },
+    {
+      id: 'invite',
+      label: t('settings.tabs.invite', 'Invite'),
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="8.5" cy="7" r="4" />
+          <line x1="20" y1="8" x2="20" y2="14" />
+          <line x1="17" y1="11" x2="23" y2="11" />
+        </svg>
+      ),
+    },
+  ];
+
+  const tabSubtitles = {
+    profile: t('settings.profile.subtitle', 'Manage your public identity, avatar, and system preferences'),
+    privacy: t('settings.privacy.subtitle', 'Control who can view your profile info, last seen, and activity'),
+    notifications: t('settings.notifications.subtitle', 'Configure sound alerts, push notifications, and quiet hours'),
+    security: t('settings.security.subtitle', 'Manage encryption keys, active sessions, and multi-factor authentication'),
+    blocked: t('settings.blocked.subtitle', 'Review blocked contacts and moderation settings'),
+    data: t('settings.data.subtitle', 'Export archives, manage storage usage, and account data'),
+    invite: t('settings.invite.subtitle', 'Invite friends to QuantumChat and track referrals'),
+  };
+
+  const currentTabMeta = TAB_ITEMS.find((item) => item.id === tab);
+  const tabButtonRefs = useRef([]);
+
+  const handleTabKeyDown = (e, index) => {
+    let nextIndex = index;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      nextIndex = (index + 1) % TAB_ITEMS.length;
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      nextIndex = (index - 1 + TAB_ITEMS.length) % TAB_ITEMS.length;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      nextIndex = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      nextIndex = TAB_ITEMS.length - 1;
+    } else {
+      return;
+    }
+    tabButtonRefs.current[nextIndex]?.focus();
+    setTab(TAB_ITEMS[nextIndex].id);
+    setSearchQuery('');
+    setError('');
+    setOk('');
+  };
  
 
  
@@ -283,7 +401,7 @@ export default function SettingsModal({
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    closeRef.current?.focus();
+    (closeRef.current || closeMobileRef.current)?.focus();
     function onKeyDown(e) {
       if (e.key === 'Escape') onCloseRef.current?.();
     }
@@ -1024,29 +1142,21 @@ export default function SettingsModal({
   return (
     <div className="create-group-overlay" role="presentation" onClick={onClose}>
       <div
-        className={`settings-modal settings-modal-wide ${className}`.trim()}
+        className={`settings-modal settings-modal-wide qc-settings-modal ${className}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="settings-modal-header">
+        {/* Mobile Header (<= 768px) */}
+        <div className="settings-modal-header qc-settings-mobile-header">
           <div className="settings-modal-heading">
-            <h2 id="settings-title">{t('settings.title', 'Settings')}</h2>
+            <h2 id="settings-title-mobile">{t('settings.title', 'Settings')}</h2>
             <p>
-              {
-                {
-                  profile: t('settings.profile.subtitle', 'Manage your public identity, avatar, and system preferences'),
-                  privacy: t('settings.privacy.subtitle', 'Control who can view your profile info, last seen, and activity'),
-                  notifications: t('settings.notifications.subtitle', 'Configure sound alerts, push notifications, and quiet hours'),
-                  security: t('settings.security.subtitle', 'Manage encryption keys, active sessions, and multi-factor authentication'),
-                  blocked: t('settings.blocked.subtitle', 'Review blocked contacts and moderation settings'),
-                  data: t('settings.data.subtitle', 'Export archives, manage storage usage, and account data'),
-                }[tab] || t('settings.subtitle', 'Profile, privacy, security, and app preferences')
-              }
+              {tabSubtitles[tab] || t('settings.subtitle', 'Profile, privacy, security, and app preferences')}
             </p>
           </div>
-          <button ref={closeRef} type="button" className="settings-close settings-close-btn" onClick={onClose} aria-label={t('common.close', 'Close')}>
+          <button ref={closeMobileRef} type="button" className="settings-close settings-close-btn" onClick={onClose} aria-label={t('common.close', 'Close')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -1054,120 +1164,114 @@ export default function SettingsModal({
           </button>
         </div>
 
-       {/* Added Search Box */}
-        <div className="settings-search-bar" style={{ padding: '0 24px 12px 24px', position: 'relative' }}>
-          <Search size={16} style={{ position: 'absolute', left: 36, top: 10, color: 'var(--text-muted)' }} />
-          <input 
-            type="text" 
-            placeholder="Search settings..." 
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ 
-              width: '100%', 
-              padding: '8px 12px 8px 36px', 
-              borderRadius: '8px',
-              border: '1px solid var(--border-subtle)',
-              background: 'var(--bg-elevated)',
-              color: 'var(--text-primary)'
-            }}
-          />
-        </div>
+        {/* Left Column Sidebar (Desktop) / Navigation Strip (Mobile) */}
+        <aside className="qc-settings-sidebar">
+          {/* Desktop-only Sidebar Header */}
+          <div className="qc-settings-sidebar-header">
+            <h2 id="settings-title" className="qc-settings-brand-title">
+              {t('settings.title', 'Settings')}
+            </h2>
+            <div className="settings-search-bar qc-settings-search-bar">
+              <Search size={14} className="qc-settings-search-icon" aria-hidden="true" />
+              <input 
+                type="text" 
+                placeholder={t('common.search', 'Search settings...')} 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="qc-settings-search-input"
+              />
+            </div>
+          </div>
 
-        <nav className="settings-tabs settings-nav" aria-label="Settings sections">
-          {[
-            {
-              id: 'profile',
-              label: t('settings.tabs.profile', 'Profile'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-              ),
-            },
-            {
-              id: 'privacy',
-              label: t('settings.tabs.privacy', 'Privacy'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
-              ),
-            },
-            {
-              id: 'notifications',
-              label: t('settings.tabs.notifications', 'Notifications'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
-              ),
-            },
-            {
-              id: 'security',
-              label: t('settings.tabs.security', 'Security'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-              ),
-            },
-            {
-              id: 'blocked',
-              label: t('settings.tabs.blocked', 'Blocked'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-                </svg>
-              ),
-            },
-            {
-              id: 'data',
-              label: t('settings.tabs.data', 'Data'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <ellipse cx="12" cy="5" rx="9" ry="3" />
-                  <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-                </svg>
-              ),
-            },
-            {
-              id: 'invite',
-              label: t('settings.tabs.invite', 'Invite'),
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                  <circle cx="8.5" cy="7" r="4" />
-                  <line x1="20" y1="8" x2="20" y2="14" />
-                  <line x1="17" y1="11" x2="23" y2="11" />
-                </svg>
-              ),
-            },
-          ].map((tItem) => (
-            <button
-              key={tItem.id}
-              type="button"
-              className={`settings-tab ${tab === tItem.id ? 'active' : ''}`}
-              aria-current={tab === tItem.id ? 'page' : undefined}
-              onClick={() => {
-                setTab(tItem.id);
-                setSearchQuery(''); // clear search if they click a tab manually
-
-                setError('');
-                setOk('');
+          {/* Mobile-only Search Box */}
+          <div className="settings-search-bar qc-settings-mobile-search" style={{ padding: '0 24px 12px 24px', position: 'relative' }}>
+            <Search size={16} style={{ position: 'absolute', insetInlineStart: 36, top: 10, color: 'var(--text-muted)' }} />
+            <input 
+              type="text" 
+              placeholder={t('common.search', 'Search settings...')} 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ 
+                width: '100%', 
+                padding: '8px 12px 8px 36px', 
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+                background: 'var(--bg-elevated)',
+                color: 'var(--text-primary)'
               }}
-            >
-              <span className="settings-tab-icon">{tItem.icon}</span>
-              <span className="settings-tab-label">{tItem.label}</span>
-            </button>
-          ))}
-        </nav>
+            />
+          </div>
 
-        <div className="settings-body" ref={bodyRef}>
+          {/* Tab Navigation List */}
+          <nav
+            className="settings-tabs settings-nav qc-settings-nav"
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label={t('settings.title', 'Settings')}
+          >
+            {TAB_ITEMS.map((tItem, index) => {
+              const isActive = tab === tItem.id;
+              return (
+                <button
+                  key={tItem.id}
+                  ref={(el) => (tabButtonRefs.current[index] = el)}
+                  id={`settings-tab-${tItem.id}`}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`settings-panel-${tItem.id}`}
+                  tabIndex={isActive ? 0 : -1}
+                  type="button"
+                  className={`settings-tab qc-settings-tab-item ${isActive ? 'active' : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={() => {
+                    setTab(tItem.id);
+                    setSearchQuery('');
+                    setError('');
+                    setOk('');
+                  }}
+                  onKeyDown={(e) => handleTabKeyDown(e, index)}
+                >
+                  <span className="settings-tab-icon qc-settings-tab-icon">{tItem.icon}</span>
+                  <span className="settings-tab-label qc-settings-tab-label">{tItem.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* Right Column / Content Pane */}
+        <main className="qc-settings-main">
+          {/* Desktop-only Sticky Header */}
+          <header className="qc-settings-desktop-header">
+            <div className="settings-modal-heading">
+              <h2 className="qc-settings-active-title">
+                {currentTabMeta?.label || t('settings.title', 'Settings')}
+              </h2>
+              <p className="qc-settings-active-subtitle">
+                {tabSubtitles[tab] || t('settings.subtitle', 'Profile, privacy, security, and app preferences')}
+              </p>
+            </div>
+            <button
+              ref={closeRef}
+              type="button"
+              className="settings-close settings-close-btn qc-settings-close-btn"
+              onClick={onClose}
+              aria-label={t('common.close', 'Close')}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </header>
+
+          <div
+            className="settings-body qc-settings-content-body"
+            ref={bodyRef}
+            role="tabpanel"
+            id={`settings-panel-${tab}`}
+            aria-labelledby={`settings-tab-${tab}`}
+          >
           {ok && <div className="settings-ok">{ok}</div>}
           {verifyLinkUrl && (
             <div className="settings-ok">
@@ -1452,6 +1556,8 @@ export default function SettingsModal({
                 <p className="settings-section-copy">
                   {t('settings.appearance.currentLook', 'Current look')}: <strong>{THEME_LABELS[theme] || theme}</strong>
                 </p>
+
+                <ThemePreviewCard />
 
                 <div className="settings-skin-card settings-skin-card--mode">
                   <header className="settings-skin-card-head">
@@ -3052,10 +3158,10 @@ export default function SettingsModal({
         )}
       </div>
     </section>
-  )
-}
-        </div >
-      </div >
+  )}
+</div>
+</main>
+</div>
       <DeviceLinkSetupModal
         open={deviceLinkSetupModalOpen}
         qrDataUrl={deviceLinkQr}

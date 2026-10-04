@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "Ajustes",
+    "preview": {
+      "title": "Vista previa del chat",
+      "receivedSample": "¡Hola! ¿Cómo se ve el nuevo tema?",
+      "sentSample": "¡Se ve nítido y muy fluido! ✨",
+      "composerPlaceholder": "Escribe un mensaje…"
+    },
     "language": {
       "title": "Idioma y Región",
       "subtitle": "Selecciona el idioma de la interfaz",

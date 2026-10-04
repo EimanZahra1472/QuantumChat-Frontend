@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "设置",
+    "preview": {
+      "title": "聊天预览",
+      "receivedSample": "嗨！新主题看起来怎么样？",
+      "sentSample": "看起来非常精致流畅！✨",
+      "composerPlaceholder": "输入消息…"
+    },
     "language": {
       "title": "语言与地区",
       "subtitle": "选择界面显示语言",

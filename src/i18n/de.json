@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "Einstellungen",
+    "preview": {
+      "title": "Chat-Vorschau",
+      "receivedSample": "Hey! Wie sieht das neue Design aus?",
+      "sentSample": "Sieht gestochen scharf und flüssig aus! ✨",
+      "composerPlaceholder": "Nachricht eingeben…"
+    },
     "language": {
       "title": "Sprache & Region",
       "subtitle": "Wählen Sie Ihre bevorzugte Sprache",
