@@ -309,6 +309,7 @@ export default function GroupMessageContent({
   onVideoPreview,
   onVideoReady,
   onBurnViewOnce,
+  onTranscriptStateChange,
 }) {
   if (!payload || payload.type === 'text') {
     const body = payload?.body ?? message?.text ?? '';
@@ -478,6 +479,8 @@ export default function GroupMessageContent({
     return (
       <AttachmentBubble
         attachment={attachment}
+        message={message}
+        currentUserId={currentUserId}
         isMine={isMine}
         resolveSecretKey={resolveSecretKey}
         onImagePreview={onImagePreview}
@@ -488,6 +491,7 @@ export default function GroupMessageContent({
         viewOnceOpened={Boolean(message.viewOnceOpenedAt)}
         viewOnceMediaKind={message.viewOnceMediaKind}
         onBurnViewOnce={onBurnViewOnce}
+        onTranscriptStateChange={onTranscriptStateChange}
       />
     );
   }
