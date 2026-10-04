@@ -1,11 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import MoonveilFX from '../components/MoonveilFX.jsx';
-import SakuraFX from '../components/SakuraFX.jsx';
-import SunsetEmberFX from '../components/SunsetEmberFX.jsx';
-import AuroraFX from '../components/AuroraFX.jsx';
-import OceanFX from '../components/OceanFX.jsx';
-import NebulaFX from '../components/NebulaFX.jsx';
-import DreamCloudFX from '../components/DreamCloudFX.jsx';
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+
+const MoonveilFX = lazy(() => import('../components/MoonveilFX.jsx'));
+const SakuraFX = lazy(() => import('../components/SakuraFX.jsx'));
+const SunsetEmberFX = lazy(() => import('../components/SunsetEmberFX.jsx'));
+const AuroraFX = lazy(() => import('../components/AuroraFX.jsx'));
+const OceanFX = lazy(() => import('../components/OceanFX.jsx'));
+const NebulaFX = lazy(() => import('../components/NebulaFX.jsx'));
+const DreamCloudFX = lazy(() => import('../components/DreamCloudFX.jsx'));
 
 const STORAGE_KEYS = ['theme', 'qc-theme'];
 
@@ -141,13 +142,15 @@ export function ThemeProvider({ children }) {
 
   return (
     <ThemeContext.Provider value={value}>
-      {theme === 'moonveil' && <MoonveilFX />}
-      {theme === 'sakura' && <SakuraFX />}
-      {theme === 'sunset' && <SunsetEmberFX />}
-      {theme === 'aurora' && <AuroraFX />}
-      {theme === 'ocean' && <OceanFX />}
-      {theme === 'dreamcloud' && <DreamCloudFX />}
-      {theme === 'nebula' && <NebulaFX />}
+      <Suspense fallback={null}>
+        {theme === 'moonveil' && <MoonveilFX />}
+        {theme === 'sakura' && <SakuraFX />}
+        {theme === 'sunset' && <SunsetEmberFX />}
+        {theme === 'aurora' && <AuroraFX />}
+        {theme === 'ocean' && <OceanFX />}
+        {theme === 'dreamcloud' && <DreamCloudFX />}
+        {theme === 'nebula' && <NebulaFX />}
+      </Suspense>
       {children}
     </ThemeContext.Provider>
   );
