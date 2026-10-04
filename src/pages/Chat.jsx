@@ -19,7 +19,7 @@ import {
   Video,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { streamQuantumAI } from "../api/aiClient.js";
@@ -28,11 +28,8 @@ import client, { muteChat, unmuteChat } from "../api/client.js";
 import { postPresenceHeartbeat } from "../api/presence.js";
 import { connectSocket, getSocket } from "../api/socket.js";
 import { getPeerVaultDecoyStatus } from "../api/vault.js";
-import AIAssistantPanel from "../components/AIAssistantPanel.jsx";
 import CallOverlay from "../components/CallOverlay.jsx";
-import CameraCapture from "../components/CameraCapture.jsx";
 import ChatEmptyState from "../components/chat/ChatEmptyState.jsx";
-import ChatMediaModal from "../components/chat/ChatMediaModal.jsx";
 import ChatOptionsMenu from "../components/chat/ChatOptionsMenu.jsx";
 import ChatShell from "../components/chat/ChatShell.jsx";
 import ComposerPlusSheet from "../components/chat/ComposerPlusSheet.jsx";
@@ -41,31 +38,37 @@ import InfoPanel from "../components/chat/InfoPanel.jsx";
 import MediaSendPreview from "../components/chat/MediaSendPreview.jsx";
 import MessageActionSheet from "../components/chat/MessageActionSheet.jsx";
 import SwipeableMessage from "../components/chat/SwipeableMessage.jsx";
-import ChatThemeModal from '../components/ChatThemeModal.jsx';
 import ClearChatModal from "../components/ClearChatModal.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
-import CreateGroupModal from "../components/CreateGroupModal.jsx";
 import DateSeparator from "../components/DateSeparator.jsx";
 import DragDropOverlay from "../components/DragDropOverlay.jsx";
-import EditHistoryModal from "../components/EditHistoryModal.jsx";
 import EmojiPicker from "../components/EmojiPicker.jsx";
-import ForwardModal from "../components/ForwardModal.jsx";
-import GroupSettingsModal from "../components/GroupSettingsModal.jsx";
-import GroupCommandCenter from "../components/GroupCommandCenter.jsx";
-import ImageLightbox from "../components/ImageLightbox.jsx";
-import MeetingOverlay from "../components/MeetingOverlay.jsx";
-import MessageInfoModal from "../components/MessageInfoModal.jsx";
 import MessageSearch from "../components/MessageSearch.jsx";
-import SettingsModal from "../components/SettingsModal.jsx";
-import StarredMessagesModal from "../components/StarredMessagesModal.jsx";
-import TimeCapsuleModal from "../components/TimeCapsuleModal.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import TypingIndicator from "../components/TypingIndicator.jsx";
 import BottomSheet from "../components/ui/BottomSheet.jsx";
 import UserAvatar from "../components/UserAvatar.jsx";
-import UserProfileModal from "../components/UserProfileModal.jsx";
 import VaultSetupModal from "../components/VaultSetupModal.jsx";
 import VaultUnlockModal from "../components/VaultUnlockModal.jsx";
+import LazyChunkErrorBoundary, { ModalLoadingFallback, PanelLoadingFallback } from "../components/LazyChunkErrorBoundary.jsx";
+import { preload, preloadOnIdle } from "../utils/preload.js";
+
+const AIAssistantPanel = lazy(() => import("../components/AIAssistantPanel.jsx"));
+const CameraCapture = lazy(() => import("../components/CameraCapture.jsx"));
+const ChatMediaModal = lazy(() => import("../components/chat/ChatMediaModal.jsx"));
+const ChatThemeModal = lazy(() => import("../components/ChatThemeModal.jsx"));
+const CreateGroupModal = lazy(() => import("../components/CreateGroupModal.jsx"));
+const EditHistoryModal = lazy(() => import("../components/EditHistoryModal.jsx"));
+const ForwardModal = lazy(() => import("../components/ForwardModal.jsx"));
+const GroupSettingsModal = lazy(() => import("../components/GroupSettingsModal.jsx"));
+const GroupCommandCenter = lazy(() => import("../components/GroupCommandCenter.jsx"));
+const ImageLightbox = lazy(() => import("../components/ImageLightbox.jsx"));
+const MeetingOverlay = lazy(() => import("../components/MeetingOverlay.jsx"));
+const MessageInfoModal = lazy(() => import("../components/MessageInfoModal.jsx"));
+const SettingsModal = lazy(() => import("../components/SettingsModal.jsx"));
+const StarredMessagesModal = lazy(() => import("../components/StarredMessagesModal.jsx"));
+const TimeCapsuleModal = lazy(() => import("../components/TimeCapsuleModal.jsx"));
+const UserProfileModal = lazy(() => import("../components/UserProfileModal.jsx"));
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNotificationSettings } from "../context/NotificationSettingsContext.jsx";
 import { useVault } from "../context/VaultContext.jsx";
@@ -339,6 +342,17 @@ export default function Chat() {
   const [contactLookupResult, setContactLookupResult] = useState(null);
   const [contactLookupLoading, setContactLookupLoading] = useState(false);
   const [contactLookupError, setContactLookupError] = useState("");
+
+  // Preload MeetingOverlay chunk on idle and when a chat that can start a call is opened
+  useEffect(() => {
+    preloadOnIdle('meeting', 2500);
+  }, []);
+
+  useEffect(() => {
+    if (selected) {
+      preload('meeting');
+    }
+  }, [selected]);
   // Custom UI feature states
   const [searchOpen, setSearchOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -7698,28 +7712,36 @@ useEffect(() => {
         )}
       </main>
       {themeModalOpen && selected && (selected.type === "dm" || selected.type === "group") && (
-  <ChatThemeModal
-    peerId={selected.type === "dm" ? selected.id : undefined}
-    groupId={selected.type === "group" ? selected.id : undefined}
-    theme={chatTheme}
-    catalog={themeCatalog}
-    onApplied={(updated) => setChatTheme(updated)}
-    onClose={() => setThemeModalOpen(false)}
-  />
-)}
+        <LazyChunkErrorBoundary onClose={() => setThemeModalOpen(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <ChatThemeModal
+              peerId={selected.type === "dm" ? selected.id : undefined}
+              groupId={selected.type === "group" ? selected.id : undefined}
+              theme={chatTheme}
+              catalog={themeCatalog}
+              onApplied={(updated) => setChatTheme(updated)}
+              onClose={() => setThemeModalOpen(false)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
 
       {aiPanelOpen && (
-        <AIAssistantPanel
-          conversation={selected}
-          messages={messages}
-          onClose={() => setAiPanelOpen(false)}
-          onInsertDraft={(text) => {
-            setDraft(text);
-            setAiPanelOpen(false);
-            textareaRef.current?.focus();
-          }}
-          onSaveEncryptedNote={saveEncryptedAINote}
-        />
+        <LazyChunkErrorBoundary onClose={() => setAiPanelOpen(false)}>
+          <Suspense fallback={<PanelLoadingFallback />}>
+            <AIAssistantPanel
+              conversation={selected}
+              messages={messages}
+              onClose={() => setAiPanelOpen(false)}
+              onInsertDraft={(text) => {
+                setDraft(text);
+                setAiPanelOpen(false);
+                textareaRef.current?.focus();
+              }}
+              onSaveEncryptedNote={saveEncryptedAINote}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
 
       <ConfirmDialog
@@ -7787,30 +7809,36 @@ useEffect(() => {
         onOpenAddParticipant={() => setShowAddParticipantModal(true)}
       />
 
-      <MeetingOverlay
-        meeting={meetingCall.meeting}
-        participants={meetingCall.participants}
-        localStream={meetingCall.localStream}
-        muted={meetingCall.muted}
-        cameraOff={meetingCall.cameraOff}
-        resolveParticipantName={(peerId) =>
-          users.find((u) => String(u.id) === String(peerId))?.displayName ||
-          users.find((u) => String(u.id) === String(peerId))?.username
-        }
-        onJoin={() =>
-          meetingCall
-            .joinMeeting()
-            .catch(() =>
-              showToast("Could not access microphone/camera", "error"),
-            )
-        }
-        onDecline={meetingCall.declineMeeting}
-        onLeave={meetingCall.leaveMeeting}
-        onEndForAll={meetingCall.endMeetingForAll}
-        onToggleMute={meetingCall.toggleMute}
-        onToggleCamera={meetingCall.toggleCamera}
-        onOpenAddParticipant={() => setShowAddParticipantModal(true)}
-      />
+      {Boolean(meetingCall.meeting) && (
+        <LazyChunkErrorBoundary onClose={meetingCall.leaveMeeting}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <MeetingOverlay
+              meeting={meetingCall.meeting}
+              participants={meetingCall.participants}
+              localStream={meetingCall.localStream}
+              muted={meetingCall.muted}
+              cameraOff={meetingCall.cameraOff}
+              resolveParticipantName={(peerId) =>
+                users.find((u) => String(u.id) === String(peerId))?.displayName ||
+                users.find((u) => String(u.id) === String(peerId))?.username
+              }
+              onJoin={() =>
+                meetingCall
+                  .joinMeeting()
+                  .catch(() =>
+                    showToast("Could not access microphone/camera", "error"),
+                  )
+              }
+              onDecline={meetingCall.declineMeeting}
+              onLeave={meetingCall.leaveMeeting}
+              onEndForAll={meetingCall.endMeetingForAll}
+              onToggleMute={meetingCall.toggleMute}
+              onToggleCamera={meetingCall.toggleCamera}
+              onOpenAddParticipant={() => setShowAddParticipantModal(true)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
 
       {showAddParticipantModal && (
         <AddParticipantModal
@@ -7847,157 +7875,177 @@ useEffect(() => {
       )}
 
       {showCreateGroup && (
-        <CreateGroupModal
-          users={users}
-          onClose={() => setShowCreateGroup(false)}
-          onCreate={handleCreateGroup}
-        />
+        <LazyChunkErrorBoundary onClose={() => setShowCreateGroup(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <CreateGroupModal
+              users={users}
+              onClose={() => setShowCreateGroup(false)}
+              onCreate={handleCreateGroup}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
 
       {showGroupSettings && activeGroup && (
-  <GroupSettingsModal
-    group={activeGroup}
-    currentUserId={user.id}
-    users={users}
-    onClose={() => setShowGroupSettings(false)}
-    onUpdated={mergeUpdatedGroup}
-    onLeftOrDeleted={handleLeftOrDeletedGroup}
-    onOpenChatTheme={() => {
-      setShowGroupSettings(false);
-      setThemeModalOpen(true);
-    }}
-  />
-)}
+        <LazyChunkErrorBoundary onClose={() => setShowGroupSettings(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <GroupSettingsModal
+              group={activeGroup}
+              currentUserId={user.id}
+              users={users}
+              onClose={() => setShowGroupSettings(false)}
+              onUpdated={mergeUpdatedGroup}
+              onLeftOrDeleted={handleLeftOrDeletedGroup}
+              onOpenChatTheme={() => {
+                setShowGroupSettings(false);
+                setThemeModalOpen(true);
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
       {showCommandCenter && activeGroup && (
-        <GroupCommandCenter
-          group={activeGroup}
-          messages={messages}
-          currentUserId={user.id}
-          onClose={() => setShowCommandCenter(false)}
-          onUpdated={mergeUpdatedGroup}
-          onJumpToMessage={(messageId) => setPendingJumpMessageId(String(messageId))}
-          onOpenGroupSettings={() => {
-            setShowCommandCenter(false);
-            setShowGroupSettings(true);
-          }}
-          onAskAiSummary={() => {
-            setDraft(
-              "@QuantumAI Please summarize this group: key announcements, open tasks, upcoming events, and recent decisions.",
-            );
-            setShowCommandCenter(false);
-            showToast("Review the draft, then send to ask QuantumAI", "info");
-          }}
-        />
+        <LazyChunkErrorBoundary onClose={() => setShowCommandCenter(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <GroupCommandCenter
+              group={activeGroup}
+              messages={messages}
+              currentUserId={user.id}
+              onClose={() => setShowCommandCenter(false)}
+              onUpdated={mergeUpdatedGroup}
+              onJumpToMessage={(messageId) => setPendingJumpMessageId(String(messageId))}
+              onOpenGroupSettings={() => {
+                setShowCommandCenter(false);
+                setShowGroupSettings(true);
+              }}
+              onAskAiSummary={() => {
+                setDraft(
+                  "@QuantumAI Please summarize this group: key announcements, open tasks, upcoming events, and recent decisions.",
+                );
+                setShowCommandCenter(false);
+                showToast("Review the draft, then send to ask QuantumAI", "info");
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {profileUserId && (
-        <UserProfileModal
-          userId={profileUserId}
-          seed={
-            (selected?.type === "dm" &&
-              String(selected.id) === String(profileUserId) &&
-              selected.peer) ||
-            users.find((u) => String(u.id) === String(profileUserId)) ||
-            null
-          }
-          online={onlineUserIds.has(String(profileUserId))}
-          muted={isChatMuted(user.id, conversationKeyForUser(profileUserId))}
-          archived={archivedKeys
-            .map(String)
-            .includes(String(conversationKeyForUser(profileUserId)))}
-          isFriend={isFriendWith(profileUserId)}
-          onRemoveFriend={async (peer) => {
-            try {
-              await client.delete(`/users/friends/${peer.id}`);
-              try {
-                const { data } = await client.get("/users/me");
-                if (data?.data) updateSessionUser(data.data);
-              } catch {
-                // non-fatal
+        <LazyChunkErrorBoundary onClose={() => setProfileUserId(null)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <UserProfileModal
+              userId={profileUserId}
+              seed={
+                (selected?.type === "dm" &&
+                  String(selected.id) === String(profileUserId) &&
+                  selected.peer) ||
+                users.find((u) => String(u.id) === String(profileUserId)) ||
+                null
               }
-              showToast("Friend removed", "success");
-              setProfileUserId(null);
-              loadDirectory();
-              loadMyFriends();
-              loadFriendDiscover(search);
-            } catch (err) {
-              showToast(
-                err.response?.data?.error || "Failed to remove friend",
-                "error",
-              );
-            }
-          }}
-          onMute={() => {
-            const key = conversationKeyForUser(profileUserId);
-            const wasMuted = mutedKeys.map(String).includes(String(key));
-            setMutedKeys(toggleMuteChat(user.id, key));
-            const request = wasMuted
-              ? unmuteChat({ peerId: profileUserId })
-              : muteChat({ peerId: profileUserId, duration: "always" });
-            request
-              .then((res) => {
-                if (res?.data) updateSessionUser(res.data);
-              })
-              .catch(() => { });
-          }}
-          onArchive={() => {
-            const key = conversationKeyForUser(profileUserId);
-            setArchivedKeys(toggleArchiveChat(user.id, key));
-          }}
-          onHide={(peer) => {
-            handleHideChat(peer);
-            setProfileUserId(null);
-            showToast("Chat hidden", "success");
-          }}
-          onBlock={(peer) => {
-            setProfileUserId(null);
-            handleBlockUser(peer);
-          }}
-          onOpenAiPanel={() => setAiPanelOpen(true)}
-          onClose={() => setProfileUserId(null)}
-          onLoaded={(data) => {
-            if (!data?.id) return;
-            setUsers((prev) => {
-              const id = String(data.id);
-              const idx = prev.findIndex((u) => String(u.id) === id);
-              if (idx < 0) return prev;
-              const next = [...prev];
-              next[idx] = { ...next[idx], ...data };
-              return next;
-            });
-            setSelected((cur) => {
-              if (
-                !cur ||
-                cur.type !== "dm" ||
-                String(cur.id) !== String(data.id)
-              )
-                return cur;
-              return {
-                ...cur,
-                peer: { ...(cur.peer || {}), ...data },
-                title: data.displayName || data.username || cur.title,
-              };
-            });
-          }}
-        />
+              online={onlineUserIds.has(String(profileUserId))}
+              muted={isChatMuted(user.id, conversationKeyForUser(profileUserId))}
+              archived={archivedKeys
+                .map(String)
+                .includes(String(conversationKeyForUser(profileUserId)))}
+              isFriend={isFriendWith(profileUserId)}
+              onRemoveFriend={async (peer) => {
+                try {
+                  await client.delete(`/users/friends/${peer.id}`);
+                  try {
+                    const { data } = await client.get("/users/me");
+                    if (data?.data) updateSessionUser(data.data);
+                  } catch {
+                    // non-fatal
+                  }
+                  showToast("Friend removed", "success");
+                  setProfileUserId(null);
+                  loadDirectory();
+                  loadMyFriends();
+                  loadFriendDiscover(search);
+                } catch (err) {
+                  showToast(
+                    err.response?.data?.error || "Failed to remove friend",
+                    "error",
+                  );
+                }
+              }}
+              onMute={() => {
+                const key = conversationKeyForUser(profileUserId);
+                const wasMuted = mutedKeys.map(String).includes(String(key));
+                setMutedKeys(toggleMuteChat(user.id, key));
+                const request = wasMuted
+                  ? unmuteChat({ peerId: profileUserId })
+                  : muteChat({ peerId: profileUserId, duration: "always" });
+                request
+                  .then((res) => {
+                    if (res?.data) updateSessionUser(res.data);
+                  })
+                  .catch(() => { });
+              }}
+              onArchive={() => {
+                const key = conversationKeyForUser(profileUserId);
+                setArchivedKeys(toggleArchiveChat(user.id, key));
+              }}
+              onHide={(peer) => {
+                handleHideChat(peer);
+                setProfileUserId(null);
+                showToast("Chat hidden", "success");
+              }}
+              onBlock={(peer) => {
+                setProfileUserId(null);
+                handleBlockUser(peer);
+              }}
+              onOpenAiPanel={() => setAiPanelOpen(true)}
+              onClose={() => setProfileUserId(null)}
+              onLoaded={(data) => {
+                if (!data?.id) return;
+                setUsers((prev) => {
+                  const id = String(data.id);
+                  const idx = prev.findIndex((u) => String(u.id) === id);
+                  if (idx < 0) return prev;
+                  const next = [...prev];
+                  next[idx] = { ...next[idx], ...data };
+                  return next;
+                });
+                setSelected((cur) => {
+                  if (
+                    !cur ||
+                    cur.type !== "dm" ||
+                    String(cur.id) !== String(data.id)
+                  )
+                    return cur;
+                  return {
+                    ...cur,
+                    peer: { ...(cur.peer || {}), ...data },
+                    title: data.displayName || data.username || cur.title,
+                  };
+                });
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {showChatMedia && (
-        <ChatMediaModal
-          messages={visibleMessages}
-          imageSrcMap={imageSrcMapRef.current}
-          videoSrcMap={videoSrcMapRef.current}
-          resolveSecretKey={resolveMySecretKey}
-          onImageReady={handleImageReady}
-          onVideoReady={handleVideoReady}
-          onImageClick={(id) => {
-            setShowChatMedia(false);
-            handleImagePreview(id);
-          }}
-          onVideoClick={(id) => {
-            setShowChatMedia(false);
-            handleVideoPreview(id);
-          }}
-          onClose={() => setShowChatMedia(false)}
-        />
+        <LazyChunkErrorBoundary onClose={() => setShowChatMedia(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <ChatMediaModal
+              messages={visibleMessages}
+              imageSrcMap={imageSrcMapRef.current}
+              videoSrcMap={videoSrcMapRef.current}
+              resolveSecretKey={resolveMySecretKey}
+              onImageReady={handleImageReady}
+              onVideoReady={handleVideoReady}
+              onImageClick={(id) => {
+                setShowChatMedia(false);
+                handleImagePreview(id);
+              }}
+              onVideoClick={(id) => {
+                setShowChatMedia(false);
+                handleVideoPreview(id);
+              }}
+              onClose={() => setShowChatMedia(false)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {pollDraft && (
         <div
@@ -8149,53 +8197,66 @@ useEffect(() => {
       )}
 
       {showSettings && (
-        <SettingsModal
-          user={user}
-          initialTab={settingsTab}
-          className="qc-settings-sheet"
+        <LazyChunkErrorBoundary
           onClose={() => {
             setShowSettings(false);
             if (isSettingsRoute) navigate(selected ? chatPathForSelection(selected) : "/chat");
           }}
-          onImportKeys={handleImportKeyFile}
-          onGenerateKeys={requestGenerateKeys}
-          onUserUpdated={updateSessionUser}
-          onLogout={() => {
-            setShowSettings(false);
-            handleLogout();
-          }}
-          onExportChat={() => {
-            if (!selected || !messages.length) {
-              showToast("Open a chat to export", "info");
-              return;
-            }
-            const lines = visibleMessages
-              .map((m) => {
-                const who =
-                  String(m.from) === String(user.id)
-                    ? "You"
-                    : usernameById.get(String(m.from)) || "User";
-                return `[${new Date(m.createdAt).toLocaleString()}] ${who}: ${m.text || (m.attachment ? "[attachment]" : "[encrypted]")
-                  }`;
-              })
-              .join("\n");
-            const blob = new Blob([lines], { type: "text/plain" });
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = `quantumchat-${selected.title || "chat"}.txt`;
-            a.click();
-            showToast("Chat exported from this device", "success");
-          }}
-        />
+        >
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <SettingsModal
+              user={user}
+              initialTab={settingsTab}
+              className="qc-settings-sheet"
+              onClose={() => {
+                setShowSettings(false);
+                if (isSettingsRoute) navigate(selected ? chatPathForSelection(selected) : "/chat");
+              }}
+              onImportKeys={handleImportKeyFile}
+              onGenerateKeys={requestGenerateKeys}
+              onUserUpdated={updateSessionUser}
+              onLogout={() => {
+                setShowSettings(false);
+                handleLogout();
+              }}
+              onExportChat={() => {
+                if (!selected || !messages.length) {
+                  showToast("Open a chat to export", "info");
+                  return;
+                }
+                const lines = visibleMessages
+                  .map((m) => {
+                    const who =
+                      String(m.from) === String(user.id)
+                        ? "You"
+                        : usernameById.get(String(m.from)) || "User";
+                    return `[${new Date(m.createdAt).toLocaleString()}] ${who}: ${m.text || (m.attachment ? "[attachment]" : "[encrypted]")
+                      }`;
+                  })
+                  .join("\n");
+                const blob = new Blob([lines], { type: "text/plain" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `quantumchat-${selected.title || "chat"}.txt`;
+                a.click();
+                showToast("Chat exported from this device", "success");
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
 
       {forwardMessage && (
-        <ForwardModal
-          conversations={conversations}
-          busy={forwardBusy}
-          onClose={() => !forwardBusy && setForwardMessage(null)}
-          onForward={handleForwardToConversation}
-        />
+        <LazyChunkErrorBoundary onClose={() => !forwardBusy && setForwardMessage(null)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <ForwardModal
+              conversations={conversations}
+              busy={forwardBusy}
+              onClose={() => !forwardBusy && setForwardMessage(null)}
+              onForward={handleForwardToConversation}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {showVaultSetup && (
         <VaultSetupModal
@@ -8236,52 +8297,69 @@ useEffect(() => {
         />
       )}
       {showStarredMessages && (
-        <StarredMessagesModal
-          entries={
-            (starredScope === 'chat' && selected
-              ? [...importantEntries, ...getStarredEntries(user.id)].filter((e) => e.conversationKey === selected.key)
-              : [...importantEntries, ...getStarredEntries(user.id)])
-          }
-          usernameById={usernameById}
-          currentUserId={user.id}
-          onSelect={handleOpenStarredEntry}
-          onCopy={(entry) => {
-            const text = entry?.text || (entry?.attachmentFilename ? `[${entry.attachmentFilename}]` : '');
-            if (!text) return;
-            navigator.clipboard?.writeText(text).then(
-              () => showToast('Copied to clipboard', 'success'),
-              () => showToast('Could not copy message', 'error'),
-            );
-          }}
-          onUnstar={(id) => {
-            const nextIds = toggleStarredMessage(user.id, { id }, null);
-            setStarredIds(nextIds);
-            setExtrasTick((n) => n + 1);
-          }}
-          onRemoveImportant={handleImportantMessage}
-          loading={importantLoading}
+        <LazyChunkErrorBoundary
           onClose={() => {
             setShowStarredMessages(false);
             setStarredScope('all');
           }}
-        />
+        >
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <StarredMessagesModal
+              entries={
+                (starredScope === 'chat' && selected
+                  ? [...importantEntries, ...getStarredEntries(user.id)].filter((e) => e.conversationKey === selected.key)
+                  : [...importantEntries, ...getStarredEntries(user.id)])
+              }
+              usernameById={usernameById}
+              currentUserId={user.id}
+              onSelect={handleOpenStarredEntry}
+              onCopy={(entry) => {
+                const text = entry?.text || (entry?.attachmentFilename ? `[${entry.attachmentFilename}]` : '');
+                if (!text) return;
+                navigator.clipboard?.writeText(text).then(
+                  () => showToast('Copied to clipboard', 'success'),
+                  () => showToast('Could not copy message', 'error'),
+                );
+              }}
+              onUnstar={(id) => {
+                const nextIds = toggleStarredMessage(user.id, { id }, null);
+                setStarredIds(nextIds);
+                setExtrasTick((n) => n + 1);
+              }}
+              onRemoveImportant={handleImportantMessage}
+              loading={importantLoading}
+              onClose={() => {
+                setShowStarredMessages(false);
+                setStarredScope('all');
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {messageInfoData && (
-        <MessageInfoModal
-          data={messageInfoData}
-          usernameById={usernameById}
-          currentUserId={user.id}
-          onSelectReply={handleSelectReplyFromInfo}
-          onClose={() => setMessageInfoData(null)}
-        />
+        <LazyChunkErrorBoundary onClose={() => setMessageInfoData(null)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <MessageInfoModal
+              data={messageInfoData}
+              usernameById={usernameById}
+              currentUserId={user.id}
+              onSelectReply={handleSelectReplyFromInfo}
+              onClose={() => setMessageInfoData(null)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {editHistoryMessage && (
-        <EditHistoryModal
-          message={editHistoryMessage}
-          currentUserId={user.id}
-          resolveSecretKey={resolveMySecretKey}
-          onClose={() => setEditHistoryMessage(null)}
-        />
+        <LazyChunkErrorBoundary onClose={() => setEditHistoryMessage(null)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <EditHistoryModal
+              message={editHistoryMessage}
+              currentUserId={user.id}
+              resolveSecretKey={resolveMySecretKey}
+              onClose={() => setEditHistoryMessage(null)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
       {logoutConfirmOpen && (
         <ConfirmDialog
@@ -8296,34 +8374,52 @@ useEffect(() => {
         />
       )}
 
-      <CameraCapture
-        open={cameraOpen}
-        onClose={() => setCameraOpen(false)}
-        onCapture={(file) => {
-          queueAttachmentFiles(file).catch((err) => {
-            showToast(err.message || "Camera upload failed", "error");
-          });
-        }}
-      />
+      {cameraOpen && (
+        <LazyChunkErrorBoundary onClose={() => setCameraOpen(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <CameraCapture
+              open={cameraOpen}
+              onClose={() => setCameraOpen(false)}
+              onCapture={(file) => {
+                queueAttachmentFiles(file).catch((err) => {
+                  showToast(err.message || "Camera upload failed", "error");
+                });
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
 
-      <TimeCapsuleModal
-  open={showCapsulePicker}
-  onCancel={() => setShowCapsulePicker(false)}
-  onConfirm={(iso) => {
-    setCapsuleUnlocksAt(iso);
-    setShowCapsulePicker(false);
-  }}
-/>
+      {showCapsulePicker && (
+        <LazyChunkErrorBoundary onClose={() => setShowCapsulePicker(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <TimeCapsuleModal
+              open={showCapsulePicker}
+              onCancel={() => setShowCapsulePicker(false)}
+              onConfirm={(iso) => {
+                setCapsuleUnlocksAt(iso);
+                setShowCapsulePicker(false);
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
 
-      <ImageLightbox
-        isOpen={Boolean(gallery)}
-        items={gallery?.items || []}
-        index={gallery?.index || 0}
-        onIndexChange={(next) =>
-          setGallery((g) => (g ? { ...g, index: next } : g))
-        }
-        onClose={() => setGallery(null)}
-      />
+      {Boolean(gallery) && (
+        <LazyChunkErrorBoundary onClose={() => setGallery(null)}>
+          <Suspense fallback={null}>
+            <ImageLightbox
+              isOpen={Boolean(gallery)}
+              items={gallery?.items || []}
+              index={gallery?.index || 0}
+              onIndexChange={(next) =>
+                setGallery((g) => (g ? { ...g, index: next } : g))
+              }
+              onClose={() => setGallery(null)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
 
       {videoPlayer && (
         <div
