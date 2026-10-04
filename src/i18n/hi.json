@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "सेटिंग्स",
+    "preview": {
+      "title": "चैट पूर्वावलोकन",
+      "receivedSample": "अरे! नया थीम कैसा लग रहा है?",
+      "sentSample": "बहुत ही शानदार और सहज लग रहा है! ✨",
+      "composerPlaceholder": "एक संदेश लिखें…"
+    },
     "language": {
       "title": "भाषा और क्षेत्र",
       "subtitle": "इंटरफ़ेस की भाषा चुनें",

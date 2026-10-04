@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "ترتیبات",
+    "preview": {
+      "title": "چیٹ پیش نظارہ",
+      "receivedSample": "ارے! نئی تھیم کیسی لگ رہی ہے؟",
+      "sentSample": "بہت شاندار اور ہموار لگ رہی ہے! ✨",
+      "composerPlaceholder": "پیغام لکھیں…"
+    },
     "language": {
       "title": "زبان اور خطہ",
       "subtitle": "ایپلی کیشن کی زبان منتخب کریں",

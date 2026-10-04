@@ -59,6 +59,12 @@
   },
   "settings": {
     "title": "الإعدادات",
+    "preview": {
+      "title": "معاينة الدردشة",
+      "receivedSample": "مرحباً! كيف يبدو المظهر الجديد؟",
+      "sentSample": "يبدو رائعاً وسلساً جداً! ✨",
+      "composerPlaceholder": "اكتب رسالة…"
+    },
     "language": {
       "title": "اللغة والمنطقة",
       "subtitle": "اختر لغة الواجهة",
