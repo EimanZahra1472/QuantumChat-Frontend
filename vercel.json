@@ -1,13 +1,13 @@
 {
   "build": {
     "env": {
-      "VITE_API_URL": "https://quantum-chat-backend.vercel.app"
+      "VITE_API_URL": "https://quantum-chat-backend-six.vercel.app"
     }
   },
   "rewrites": [
     {
       "source": "/quantum-ai/:path*",
-      "destination": "https://ai.quantumlogicslimited.com/api/v1/:path*"
+      "destination": "https://quantum-ai-backend-six.vercel.app/api/v1/:path*"
     },
     {
       "source": "/((?!assets/|logo\\.png|manifest\\.webmanifest|theme-init\\.js|sw\\.js).*)",
