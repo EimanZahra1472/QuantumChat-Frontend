@@ -8,6 +8,7 @@ import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import VoicePlayer from './VoicePlayer.jsx';
 import LinkifiedText from './LinkifiedText.jsx';
+import MarkdownContent, { isAiMarkdownMessage } from './MarkdownContent.jsx';
 
 function MentionText({ text }) {
   const parts = [];
@@ -496,5 +497,8 @@ export default function GroupMessageContent({
     );
   }
 
+  if (isAiMarkdownMessage(message)) {
+    return <MarkdownContent text={message?.text || ''} />;
+  }
   return <LinkifiedText text={message?.text || ''} />;
 }

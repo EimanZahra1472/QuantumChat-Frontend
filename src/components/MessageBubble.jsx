@@ -27,6 +27,7 @@ import { detectTextDirection } from '../utils/scriptDirection.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import GroupMessageContent from './GroupMessageContent.jsx';
 import LinkifiedText from './LinkifiedText.jsx';
+import MarkdownContent, { isAiMarkdownMessage } from './MarkdownContent.jsx';
 const MENU_GAP = 8;
 const VIEW_PAD = 12;
 
@@ -807,6 +808,13 @@ function MessageBubble({
                     </span>
                   ))}
                 </span>
+              ) : isAiMarkdownMessage(message) ? (
+                <div
+                  className={`message-text message-text--markdown ${detectTextDirection(message.text) === 'rtl' ? 'is-rtl' : 'is-ltr'}`}
+                  dir={detectTextDirection(message.text)}
+                >
+                  <MarkdownContent text={message.text} />
+                </div>
               ) : (
                 <span
                   className={`message-text ${detectTextDirection(message.text) === 'rtl' ? 'is-rtl' : 'is-ltr'}`}

@@ -9,6 +9,7 @@ import {
   readStoredAiBg,
   writeStoredAiBg,
 } from '../utils/aiPanelBg.js';
+import MarkdownContent from './MarkdownContent.jsx';
 
 function messageKey(message, index) {
   return String(message.id || message._id || `idx-${index}`);
@@ -284,7 +285,11 @@ export default function AIAssistantPanel({ conversation, messages, onClose, onIn
       ) : null}
 
       <div className="ai-panel-answer">
-        {answer || 'Ask for an explanation, summary, or draft reply.'}
+        {answer ? (
+          <MarkdownContent text={answer} />
+        ) : (
+          'Ask for an explanation, summary, or draft reply.'
+        )}
       </div>
 
       {answer && (
