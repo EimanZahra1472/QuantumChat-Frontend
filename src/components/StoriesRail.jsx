@@ -1,5 +1,5 @@
 import { BookmarkPlus, Camera, ChevronRight, Eye, FilePen, Forward, ImagePlus, Mic, Paperclip, Pencil, Repeat2, Send, Share2, Smile, Square, Type, X } from 'lucide-react';
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
 import { connectSocket, getSocket } from '../api/socket.js';
@@ -24,13 +24,15 @@ import {
   viewerCanSeeStory,
 } from '../utils/storyMedia.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
-import HighlightPickerSheet from './HighlightPickerSheet.jsx';
 import StoryCaptionOverlay from './StoryCaptionOverlay.jsx';
-import StoryHistoryPanel from './StoryHistoryPanel.jsx';
 import { StoryLocalPreview, StoryPublishControls, useStoryPublishOptions } from './StoryPublishControls.jsx';
-import TextStoryComposer from './TextStoryComposer.jsx';
 import { useToast } from './ToastProvider.jsx';
 import UserAvatar from './UserAvatar.jsx';
+import LazyChunkErrorBoundary, { ModalLoadingFallback } from './LazyChunkErrorBoundary.jsx';
+
+const HighlightPickerSheet = lazy(() => import('./HighlightPickerSheet.jsx'));
+const StoryHistoryPanel = lazy(() => import('./StoryHistoryPanel.jsx'));
+const TextStoryComposer = lazy(() => import('./TextStoryComposer.jsx'));
 const MAX_STORY_SECONDS = 60;
 const MAX_STORY_UPLOAD_BYTES = 95 * 1024 * 1024; // stay under server 100MB limit
 const COMPRESS_IF_LARGER_THAN = 4 * 1024 * 1024; // compress status videos over ~4MB
@@ -856,28 +858,38 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
         />
       )}
             {textComposerOpen && !pendingQueue.length && (
-        <TextStoryComposer
-        friends={storyFriends}
-          onCancel={() => setTextComposerOpen(false)}
-          onConfirm={confirmPostTextStory}
-          uploading={uploading}
-          onError={onError}
-        />
+        <LazyChunkErrorBoundary onClose={() => setTextComposerOpen(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <TextStoryComposer
+              friends={storyFriends}
+              onCancel={() => setTextComposerOpen(false)}
+              onConfirm={confirmPostTextStory}
+              uploading={uploading}
+              onError={onError}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
 
-       <StoryHistoryPanel
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        currentUserId={currentUser?.id}
-        initialTab={historyTab}
-        onError={onError}
-        onChanged={() => {
-          loadStories();
-          loadDraftsCount();
-        }}
-        onPreviewDraft={openDraftPreview}
-        onPreviewStory={openActiveStoryPreview}
-      />
+      {historyOpen && (
+        <LazyChunkErrorBoundary onClose={() => setHistoryOpen(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <StoryHistoryPanel
+              open={historyOpen}
+              onClose={() => setHistoryOpen(false)}
+              currentUserId={currentUser?.id}
+              initialTab={historyTab}
+              onError={onError}
+              onChanged={() => {
+                loadStories();
+                loadDraftsCount();
+              }}
+              onPreviewDraft={openDraftPreview}
+              onPreviewStory={openActiveStoryPreview}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
 
       {createSheetOpen &&
         createPortal(
@@ -2017,14 +2029,18 @@ function StoryViewer({ group, startIndex, currentUserId, users = [], onClose, on
           />
         )}
         {isOwn && saveHighlightOpen && (
-          <HighlightPickerSheet
-            open={saveHighlightOpen}
-            onClose={() => setSaveHighlightOpen(false)}
-            onError={onError}
-            mediaUrl={mediaUrl}
-            mediaBlob={mediaBlob}
-            story={story}
-          />
+          <LazyChunkErrorBoundary onClose={() => setSaveHighlightOpen(false)}>
+            <Suspense fallback={<ModalLoadingFallback />}>
+              <HighlightPickerSheet
+                open={saveHighlightOpen}
+                onClose={() => setSaveHighlightOpen(false)}
+                onError={onError}
+                mediaUrl={mediaUrl}
+                mediaBlob={mediaBlob}
+                story={story}
+              />
+            </Suspense>
+          </LazyChunkErrorBoundary>
         )}
        {!isOwn && story.allowReplies !== false && (
           <form

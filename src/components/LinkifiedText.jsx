@@ -1,10 +1,12 @@
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { UserRound, Download, Copy, X } from 'lucide-react';
 import { linkifyText } from '../utils/linkify.js';
 import { isSafeHttpUrl } from '../utils/safeUrl.js';
 import { lookupContactByPhone } from '../api/client.js';
-import UserProfileModal from './UserProfileModal.jsx';
+import LazyChunkErrorBoundary, { ModalLoadingFallback } from './LazyChunkErrorBoundary.jsx';
+
+const UserProfileModal = lazy(() => import('./UserProfileModal.jsx'));
 
 function toHref(url) {
   return url.startsWith('http') ? url : `https://${url}`;
@@ -136,7 +138,11 @@ function PhoneToken({ phone }) {
         )}
 
       {showProfile && foundUserId && (
-        <UserProfileModal userId={foundUserId} onClose={() => setShowProfile(false)} />
+        <LazyChunkErrorBoundary onClose={() => setShowProfile(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <UserProfileModal userId={foundUserId} onClose={() => setShowProfile(false)} />
+          </Suspense>
+        </LazyChunkErrorBoundary>
       )}
     </>
   );
