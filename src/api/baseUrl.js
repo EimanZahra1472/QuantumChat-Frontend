@@ -3,7 +3,7 @@
  * Production builds must never silently use localhost — CSP on Vercel blocks it.
  */
 const LEGACY_PROD_BACKEND = 'https://quantum-chat-backend.vercel.app';
-const PROD_BACKEND = 'https://quantum-chat-backend-six.vercel.app';
+const PROD_BACKEND = 'https://quantum-chat-backend-three.vercel.app';
 
 function normalizeApiBaseUrl(url) {
   const trimmed = String(url || '')
