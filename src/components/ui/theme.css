@@ -18,26 +18,26 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  /* Surfaces — dark emerald */
-  --qc-bg: #0a2a1e;
-  --qc-surface: #0d3527;
-  --qc-surface-elevated: #12402f;
-  --qc-surface-overlay: rgba(18, 64, 47, 0.95); /* sheets/drawers over content */
-  --qc-border: #1a4534;
-  --qc-border-strong: #265c47;
+  /* Surfaces — deep leather/brown */
+  --qc-bg: #1a1214;
+  --qc-surface: #231819;
+  --qc-surface-elevated: #2d2022;
+  --qc-surface-overlay: rgba(45, 32, 34, 0.95); /* sheets/drawers over content */
+  --qc-border: #3d2c2e;
+  --qc-border-strong: #4a3539;
 
   /* Text — champagne */
-  --qc-text-primary: #f8e7c9;
-  --qc-text-secondary: #d9c9a3;
-  --qc-text-tertiary: #c2b696;
-  --qc-text-on-accent: #064e3b;
+  --qc-text-primary: #f6e6d8;
+  --qc-text-secondary: #d9bfb3;
+  --qc-text-tertiary: #b39a95;
+  --qc-text-on-accent: #2d1a1c;
 
-  /* Quantum accent pair — champagne */
-  --qc-violet: #f8e7c9;
-  --qc-violet-strong: #eddcb0;
-  --qc-violet-soft: rgba(248, 231, 201, 0.14);
-  --qc-cyan: #eddcb0;
-  --qc-cyan-soft: rgba(248, 231, 201, 0.14);
+  /* Quantum accent pair — rose gold & champagne */
+  --qc-violet: #e8b9ae;
+  --qc-violet-strong: #ecd2c4;
+  --qc-violet-soft: rgba(232, 185, 174, 0.14);
+  --qc-cyan: #f6e6d8;
+  --qc-cyan-soft: rgba(246, 230, 216, 0.14);
 
   /* Semantic */
   --qc-accent: var(--qc-violet);
@@ -45,13 +45,13 @@
   --qc-accent-soft: var(--qc-violet-soft);
   --qc-danger: #ff6b6b;
   --qc-danger-soft: #ff6b6b22;
-  --qc-focus-ring: rgba(248, 231, 201, 0.45);
+  --qc-focus-ring: rgba(232, 185, 174, 0.45);
 
   /* Elevation */
-  --qc-shadow-sm: 0 1px 2px rgba(4, 20, 14, 0.4);
-  --qc-shadow-md: 0 8px 24px rgba(4, 20, 14, 0.45);
-  --qc-shadow-lg: 0 16px 48px rgba(4, 20, 14, 0.55);
-  --qc-backdrop: rgba(10, 42, 30, 0.72);
+  --qc-shadow-sm: 0 1px 2px rgba(10, 5, 6, 0.4);
+  --qc-shadow-md: 0 8px 24px rgba(10, 5, 6, 0.48);
+  --qc-shadow-lg: 0 16px 48px rgba(10, 5, 6, 0.55);
+  --qc-backdrop: rgba(26, 18, 20, 0.72);
 
   /* Radius */
   --qc-radius-sm: 8px;
@@ -89,25 +89,25 @@
   color-scheme: light;
 
   /* Surfaces — champagne */
-  --qc-bg: #faf3e3;
-  --qc-surface: #fdf8ee;
-  --qc-surface-elevated: #fffaf0;
-  --qc-surface-overlay: rgba(255, 250, 240, 0.95);
-  --qc-border: #ecdfc0;
-  --qc-border-strong: #dfd0ad;
+  --qc-bg: #fbf4ee;
+  --qc-surface: #fdf8f3;
+  --qc-surface-elevated: #fffaf6;
+  --qc-surface-overlay: rgba(255, 250, 246, 0.95);
+  --qc-border: #ecd9cc;
+  --qc-border-strong: #ad8370;
 
-  /* Text — dark emerald & deep muted */
-  --qc-text-primary: #1c2b23;
-  --qc-text-secondary: #4a5a4f;
-  --qc-text-tertiary: #6b6152;
+  /* Text — deep leather & warm brown */
+  --qc-text-primary: #2d1a1c;
+  --qc-text-secondary: #5a4146;
+  --qc-text-tertiary: #75605a;
   --qc-text-on-accent: #ffffff;
 
-  /* Quantum accent pair — emerald */
-  --qc-violet: #064e3b;
-  --qc-violet-strong: #053d2e;
-  --qc-violet-soft: rgba(6, 78, 59, 0.12);
-  --qc-cyan: #0b6e52;
-  --qc-cyan-soft: rgba(11, 110, 82, 0.12);
+  /* Quantum accent pair — deep mauve-rose */
+  --qc-violet: #8a4a52;
+  --qc-violet-strong: #733d44;
+  --qc-violet-soft: rgba(138, 74, 82, 0.12);
+  --qc-cyan: #a65f63;
+  --qc-cyan-soft: rgba(166, 95, 99, 0.12);
 
   /* Semantic */
   --qc-accent: var(--qc-violet);
@@ -115,43 +115,43 @@
   --qc-accent-soft: var(--qc-violet-soft);
   --qc-danger: #dc2626;
   --qc-danger-soft: rgba(220, 38, 38, 0.1);
-  --qc-focus-ring: rgba(6, 78, 59, 0.45);
+  --qc-focus-ring: rgba(138, 74, 82, 0.45);
 
-  --qc-shadow-sm: 0 1px 3px rgba(6, 78, 59, 0.06), 0 1px 2px rgba(6, 78, 59, 0.04);
-  --qc-shadow-md: 0 4px 12px rgba(6, 78, 59, 0.08), 0 2px 4px rgba(6, 78, 59, 0.04);
-  --qc-shadow-lg: 0 12px 32px rgba(28, 43, 35, 0.1), 0 4px 8px rgba(28, 43, 35, 0.04);
-  --qc-backdrop: rgba(28, 43, 35, 0.4);
+  --qc-shadow-sm: 0 1px 3px rgba(90, 50, 55, 0.06), 0 1px 2px rgba(90, 50, 55, 0.04);
+  --qc-shadow-md: 0 4px 12px rgba(90, 50, 55, 0.08), 0 2px 4px rgba(90, 50, 55, 0.04);
+  --qc-shadow-lg: 0 12px 32px rgba(45, 26, 28, 0.1), 0 4px 8px rgba(45, 26, 28, 0.04);
+  --qc-backdrop: rgba(45, 26, 28, 0.4);
 }
 
 /* OS-preference fallback when no explicit data-theme is set */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;
-    --qc-bg: #faf3e3;
-    --qc-surface: #fdf8ee;
-    --qc-surface-elevated: #fffaf0;
-    --qc-surface-overlay: rgba(255, 250, 240, 0.95);
-    --qc-border: #ecdfc0;
-    --qc-border-strong: #dfd0ad;
-    --qc-text-primary: #1c2b23;
-    --qc-text-secondary: #4a5a4f;
-    --qc-text-tertiary: #6b6152;
+    --qc-bg: #fbf4ee;
+    --qc-surface: #fdf8f3;
+    --qc-surface-elevated: #fffaf6;
+    --qc-surface-overlay: rgba(255, 250, 246, 0.95);
+    --qc-border: #ecd9cc;
+    --qc-border-strong: #ad8370;
+    --qc-text-primary: #2d1a1c;
+    --qc-text-secondary: #5a4146;
+    --qc-text-tertiary: #75605a;
     --qc-text-on-accent: #ffffff;
-    --qc-violet: #064e3b;
-    --qc-violet-strong: #053d2e;
-    --qc-violet-soft: rgba(6, 78, 59, 0.12);
-    --qc-cyan: #0b6e52;
-    --qc-cyan-soft: rgba(11, 110, 82, 0.12);
+    --qc-violet: #8a4a52;
+    --qc-violet-strong: #733d44;
+    --qc-violet-soft: rgba(138, 74, 82, 0.12);
+    --qc-cyan: #a65f63;
+    --qc-cyan-soft: rgba(166, 95, 99, 0.12);
     --qc-accent: var(--qc-violet);
     --qc-accent-hover: var(--qc-violet-strong);
     --qc-accent-soft: var(--qc-violet-soft);
     --qc-danger: #dc2626;
     --qc-danger-soft: rgba(220, 38, 38, 0.1);
-    --qc-focus-ring: rgba(6, 78, 59, 0.45);
-    --qc-shadow-sm: 0 1px 3px rgba(6, 78, 59, 0.06), 0 1px 2px rgba(6, 78, 59, 0.04);
-    --qc-shadow-md: 0 4px 12px rgba(6, 78, 59, 0.08), 0 2px 4px rgba(6, 78, 59, 0.04);
-    --qc-shadow-lg: 0 12px 32px rgba(28, 43, 35, 0.1), 0 4px 8px rgba(28, 43, 35, 0.04);
-    --qc-backdrop: rgba(28, 43, 35, 0.4);
+    --qc-focus-ring: rgba(138, 74, 82, 0.45);
+    --qc-shadow-sm: 0 1px 3px rgba(90, 50, 55, 0.06), 0 1px 2px rgba(90, 50, 55, 0.04);
+    --qc-shadow-md: 0 4px 12px rgba(90, 50, 55, 0.08), 0 2px 4px rgba(90, 50, 55, 0.04);
+    --qc-shadow-lg: 0 12px 32px rgba(45, 26, 28, 0.1), 0 4px 8px rgba(45, 26, 28, 0.04);
+    --qc-backdrop: rgba(45, 26, 28, 0.4);
   }
 }
 
