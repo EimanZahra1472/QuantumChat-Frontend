@@ -18,18 +18,18 @@
   min-width: 220px;
   min-height: 180px;
   padding: 2rem;
-  background: var(--bg-surface, #0d3527);
-  border: 1px solid var(--border-subtle, #1a4534);
+  background: var(--bg-surface, #231819);
+  border: 1px solid var(--border-subtle, #3d2c2e);
   border-radius: var(--radius-lg, 20px);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-  color: var(--text-primary, #f8e7c9);
+  color: var(--text-primary, #f6e6d8);
 }
 
 .qc-lazy-spinner {
   width: 36px;
   height: 36px;
-  border: 3px solid rgba(248, 231, 201, 0.18);
-  border-top-color: var(--accent, #f8e7c9);
+  border: 3px solid rgba(232, 185, 174, 0.18);
+  border-top-color: var(--accent, #e8b9ae);
   border-radius: 50%;
   animation: qc-lazy-spin 0.8s linear infinite;
 }
@@ -48,11 +48,11 @@
   max-width: 380px;
   width: 90%;
   padding: 2rem;
-  background: var(--bg-surface, #0d3527);
-  border: 1px solid var(--border-subtle, #1a4534);
+  background: var(--bg-surface, #231819);
+  border: 1px solid var(--border-subtle, #3d2c2e);
   border-radius: var(--radius-lg, 20px);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-  color: var(--text-primary, #f8e7c9);
+  color: var(--text-primary, #f6e6d8);
 }
 
 .qc-lazy-error-icon {
@@ -66,13 +66,13 @@
   font-size: 1.15rem;
   font-weight: 700;
   margin: 0 0 0.5rem 0;
-  color: var(--text-primary, #f8e7c9);
+  color: var(--text-primary, #f6e6d8);
 }
 
 .qc-lazy-error-desc {
   font-size: 0.88rem;
   line-height: 1.45;
-  color: var(--text-secondary, #d9c9a3);
+  color: var(--text-secondary, #d9bfb3);
   margin: 0 0 1.5rem 0;
 }
 
@@ -85,8 +85,8 @@
 
 .qc-lazy-btn-primary {
   padding: 0.6rem 1.25rem;
-  background: var(--accent, #f8e7c9);
-  color: var(--text-inverse, #064e3b);
+  background: var(--accent, #e8b9ae);
+  color: var(--text-inverse, #2d1a1c);
   border: none;
   border-radius: var(--radius-md, 14px);
   font-weight: 600;
@@ -103,8 +103,8 @@
 .qc-lazy-btn-secondary {
   padding: 0.6rem 1.25rem;
   background: transparent;
-  color: var(--text-primary, #f8e7c9);
-  border: 1px solid var(--border-subtle, #1a4534);
+  color: var(--text-primary, #f6e6d8);
+  border: 1px solid var(--border-subtle, #3d2c2e);
   border-radius: var(--radius-md, 14px);
   font-weight: 500;
   font-size: 0.9rem;
