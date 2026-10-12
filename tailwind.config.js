@@ -9,12 +9,13 @@ export default {
     extend: {
       colors: {
         brand: {
-          emerald: '#064e3b',
-          champagne: '#f8e7c9',
-          bg: '#0a2a1e',
-          surface: '#0d3527',
-          text: '#f8e7c9',
-          textMuted: '#c2b696',
+          mauve: '#8a4a52',
+          roseGold: '#e8b9ae',
+          champagne: '#f6e6d8',
+          bg: '#1a1214',
+          surface: '#231819',
+          text: '#f6e6d8',
+          textMuted: '#b39a95',
         },
       },
     },
