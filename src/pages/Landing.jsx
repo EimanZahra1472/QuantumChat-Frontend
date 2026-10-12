@@ -169,7 +169,7 @@ export default function Landing() {
               transition={{ duration: 0.4 }}
             >
               <BrandLogo className="landing-brand-hero-logo" size={56} />
-              QuantumChat
+              <span className="landing-brand-hero-text">QuantumChat</span>
             </motion.p>
             <motion.h1
               initial={{ opacity: 0, y: 16 }}
