@@ -17,6 +17,25 @@ export function parseGroupPayload(text) {
   return { type: 'text', body: text };
 }
 
+/** True when decrypted text is a QuantumChat structured payload (file/voice/poll/…). */
+export function isQcStructuredPayload(text) {
+  const parsed = parseGroupPayload(text);
+  return Boolean(parsed?.type && parsed.type !== 'text');
+}
+
+/**
+ * When an optimistic bubble is confirmed over the socket, keep a locally
+ * decrypted structured payload and never let a placeholder filename clobber it.
+ */
+export function preferConfirmedThreadText(pendingText, confirmedText, { mediaPending = false } = {}) {
+  if (isQcStructuredPayload(confirmedText)) return confirmedText;
+  if (isQcStructuredPayload(pendingText) && !isQcStructuredPayload(confirmedText)) {
+    return pendingText;
+  }
+  if (mediaPending) return confirmedText ?? pendingText;
+  return pendingText ?? confirmedText;
+}
+
 export function encodePoll({ question, options }) {
   return encodeGroupPayload({
     type: 'poll',
@@ -39,8 +58,17 @@ export function encodeAnnouncement(body) {
   return encodeGroupPayload({ type: 'announcement', body: String(body || '') });
 }
 
-export function encodeGroupFile({ attachmentId, key, nonce, filename, mimetype, size }) {
-  return encodeGroupPayload({
+export function encodeGroupFile({
+  attachmentId,
+  key,
+  nonce,
+  filename,
+  mimetype,
+  size,
+  waveform,
+  durationSeconds,
+}) {
+  const payload = {
     type: 'file',
     attachmentId,
     key,
@@ -48,7 +76,21 @@ export function encodeGroupFile({ attachmentId, key, nonce, filename, mimetype, 
     filename,
     mimetype,
     size,
-  });
+  };
+  if (Array.isArray(waveform) && waveform.length) payload.waveform = waveform;
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    payload.durationSeconds = durationSeconds;
+  }
+  return encodeGroupPayload(payload);
+}
+
+export function encodeVoiceMeta({ waveform, durationSeconds, filename, mimetype }) {
+  const payload = { type: 'voice', filename, mimetype };
+  if (Array.isArray(waveform) && waveform.length) payload.waveform = waveform;
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    payload.durationSeconds = durationSeconds;
+  }
+  return encodeGroupPayload(payload);
 }
 
 export function extractMentions(text, members = []) {

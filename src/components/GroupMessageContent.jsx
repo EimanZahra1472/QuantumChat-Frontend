@@ -5,8 +5,10 @@ import { secretboxOpen } from '../crypto/keys.js';
 import { resolveGroupAttachment } from '../crypto/voiceCache.js';
 import { isEmojiOnlyText, splitEmojis } from '../utils/emojis.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
+import { fileMetaFromStructured } from '../utils/voiceMessage.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import VoicePlayer from './VoicePlayer.jsx';
+import VoiceTranscriptPanel from './VoiceTranscriptPanel.jsx';
 import LinkifiedText from './LinkifiedText.jsx';
 import MarkdownContent, { isAiMarkdownMessage } from './MarkdownContent.jsx';
 
@@ -29,6 +31,7 @@ function MentionText({ text }) {
 }
 
 function mediaKindFromPayload(payload) {
+  if (payload?.type === 'voice') return 'audio';
   const mime = String(payload?.mimetype || '').toLowerCase();
   const name = String(payload?.filename || '').toLowerCase();
   if (mime.startsWith('video/')) return 'video';
@@ -49,20 +52,62 @@ function mediaKindFromPayload(payload) {
   return 'file';
 }
 
-function GroupFileCard({ payload, isMine }) {
+function VoiceSkeleton() {
+  return (
+    <div className="voice-player-modern skeleton-voice-loading" aria-label="Loading voice note">
+      <div className="voice-main-row">
+        <div className="voice-play-btn skeleton" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
+        <div className="voice-wave-bars" style={{ pointerEvents: 'none' }}>
+          {Array.from({ length: 24 }).map((_, i) => (
+            <span
+              key={i}
+              className="voice-wave-bar skeleton"
+              style={{ height: `${20 + ((i * 7) % 65)}%` }}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="voice-meta-row">
+        <div className="voice-meta-left">
+          <span className="voice-time-label skeleton" style={{ width: 32, height: 11, borderRadius: 4 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GroupFileCard({
+  payload,
+  isMine,
+  message,
+  currentUserId,
+  resolveSecretKey,
+  onTranscriptStateChange,
+  senderAvatar,
+  onListened,
+}) {
+  const canDecrypt = Boolean(payload?.attachmentId && payload.key && payload.nonce);
   const [url, setUrl] = useState(null);
-  const [status, setStatus] = useState('idle');
-  const [mime, setMime] = useState(payload.mimetype || 'application/octet-stream');
+  const [blob, setBlob] = useState(null);
+  const [status, setStatus] = useState(canDecrypt ? 'loading' : 'error');
+  const [retry, setRetry] = useState(0);
   const kind = mediaKindFromPayload(payload);
+  const meta = fileMetaFromStructured(payload);
+  const listened = Boolean(
+    (message?.listenedBy || []).some((entry) => String(entry.user) === String(currentUserId)),
+  );
 
   useEffect(() => {
     let cancelled = false;
     const abortController = new AbortController();
     async function load() {
-      if (!payload?.attachmentId || !payload.key || !payload.nonce) return;
+      if (!canDecrypt) {
+        setStatus('error');
+        return;
+      }
       setStatus('loading');
       try {
-        const { url: objectUrl } = await resolveGroupAttachment({
+        const opened = await resolveGroupAttachment({
           attachmentId: payload.attachmentId,
           keyB64: payload.key,
           nonce: payload.nonce,
@@ -71,9 +116,9 @@ function GroupFileCard({ payload, isMine }) {
           openFn: secretboxOpen,
         });
         if (cancelled) return;
-        setMime(payload.mimetype || 'application/octet-stream');
-        setUrl(objectUrl);
-        setStatus('idle');
+        setUrl(opened.url);
+        setBlob(opened.blob || null);
+        setStatus('ready');
       } catch (err) {
         if (cancelled || err?.name === 'CanceledError' || err?.name === 'AbortError') return;
         setStatus('error');
@@ -84,46 +129,65 @@ function GroupFileCard({ payload, isMine }) {
       cancelled = true;
       abortController.abort();
     };
-  }, [payload?.attachmentId, payload?.key, payload?.nonce, payload?.mimetype]);
+  }, [payload?.attachmentId, payload?.key, payload?.nonce, payload?.mimetype, canDecrypt, retry]);
 
-  if (status === 'loading') {
-    if (kind === 'audio') {
-      return (
-        <div className="voice-player-modern skeleton-voice-loading" aria-label="Loading voice note">
-          <div className="voice-main-row">
-            <div className="voice-play-btn skeleton" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
-            <div className="voice-wave-bars" style={{ pointerEvents: 'none' }}>
-              {Array.from({ length: 24 }).map((_, i) => (
-                <span
-                  key={i}
-                  className="voice-wave-bar skeleton"
-                  style={{ height: `${20 + ((i * 7) % 65)}%` }}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="voice-meta-row">
-            <div className="voice-meta-left">
-              <span className="voice-time-label skeleton" style={{ width: 32, height: 11, borderRadius: 4 }} />
-            </div>
-          </div>
-        </div>
-      );
-    }
+  if (status === 'loading' || (status !== 'error' && !url)) {
+    if (kind === 'audio') return <VoiceSkeleton />;
     return <div className="skeleton attachment-preview-placeholder" />;
   }
 
   if (status === 'error' || !url) {
+    if (kind === 'audio' && (message?._status === 'sending' || message?._pending)) {
+      return (
+        <div className="voice-attachment-wrap voice-optimistic-sending">
+          <VoicePlayer
+            isMine={true}
+            waveform={meta.waveform || message?.waveform}
+            durationSeconds={meta.durationSeconds || message?.durationSeconds}
+          />
+        </div>
+      );
+    }
     return (
       <div className="attachment-chip">
         <span>{payload.filename || 'Encrypted file'}</span>
         <span className="attachment-note">can&apos;t decrypt</span>
+        <button
+          type="button"
+          className="transcript-inline-btn"
+          onClick={() => setRetry((n) => n + 1)}
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   if (kind === 'audio') {
-    return <VoicePlayer url={url} isMine={isMine} />;
+    return (
+      <div className="voice-attachment-wrap">
+        <VoicePlayer
+          url={url}
+          isMine={isMine}
+          waveform={meta.waveform}
+          durationSeconds={meta.durationSeconds}
+          messageId={message?.id || message?._id}
+          listened={isMine ? Boolean((message?.listenedBy || []).length) : listened}
+          senderAvatar={!isMine ? senderAvatar : undefined}
+          onListened={onListened ? () => onListened(message?.id || message?._id) : undefined}
+        />
+        {message && (
+          <VoiceTranscriptPanel
+            message={message}
+            currentUserId={currentUserId}
+            isMine={isMine}
+            resolveSecretKey={resolveSecretKey}
+            getAudioBlob={async () => blob}
+            onTranscriptStateChange={onTranscriptStateChange}
+          />
+        )}
+      </div>
+    );
   }
   if (kind === 'image') {
     return <img className="attachment-preview" src={url} alt={payload.filename || 'Image'} />;
@@ -224,7 +288,15 @@ function ViewOnceGroupFileCard({ payload, isMine, mediaKind, onBurnViewOnce }) {
   if (!url) return null;
 
   if (kind === 'audio') {
-    return <VoicePlayer url={url} autoPlay onPlayedThrough={burn} />;
+    return (
+      <VoicePlayer
+        url={url}
+        autoPlay
+        onPlayedThrough={burn}
+        waveform={payload?.waveform}
+        durationSeconds={payload?.durationSeconds}
+      />
+    );
   }
 
   if (kind === 'video') {
@@ -311,6 +383,8 @@ export default function GroupMessageContent({
   onVideoReady,
   onBurnViewOnce,
   onTranscriptStateChange,
+  senderAvatar,
+  onListened,
 }) {
   if (!payload || payload.type === 'text') {
     const body = payload?.body ?? message?.text ?? '';
@@ -453,7 +527,7 @@ export default function GroupMessageContent({
     );
   }
 
-  if (payload.type === 'file') {
+  if (payload.type === 'file' || payload.type === 'voice') {
     if (message.viewOnce && message.viewOnceOpenedAt) {
       return (
         <AttachmentBubble
@@ -473,7 +547,18 @@ export default function GroupMessageContent({
         />
       );
     }
-    return <GroupFileCard payload={payload} isMine={isMine} />;
+    return (
+      <GroupFileCard
+        payload={payload}
+        isMine={isMine}
+        message={message}
+        currentUserId={currentUserId}
+        resolveSecretKey={resolveSecretKey}
+        onTranscriptStateChange={onTranscriptStateChange}
+        senderAvatar={senderAvatar}
+        onListened={onListened}
+      />
+    );
   }
 
   if (attachment) {

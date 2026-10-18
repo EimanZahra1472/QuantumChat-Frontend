@@ -1,4 +1,5 @@
 const ALLOWED_RATES = [0.5, 1, 1.5, 2];
+const CYCLE_RATES = [1, 1.5, 2];
 const STORAGE_KEY = 'quantumchat.voicePlaybackRate';
 
 /**
@@ -30,4 +31,11 @@ export function writeStoredRate(rate) {
   return validated;
 }
 
-export { ALLOWED_RATES, STORAGE_KEY };
+/** WhatsApp-style pill tap: 1x → 1.5x → 2x → 1x. */
+export function cyclePlaybackRate(current) {
+  const idx = CYCLE_RATES.indexOf(Number(current));
+  if (idx === -1) return CYCLE_RATES[0];
+  return CYCLE_RATES[(idx + 1) % CYCLE_RATES.length];
+}
+
+export { ALLOWED_RATES, CYCLE_RATES, STORAGE_KEY };
