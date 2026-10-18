@@ -203,3 +203,14 @@ export function startIncomingRingSound(volumeScale = 0.8) {
     active.clear();
   };
 }
+
+/** Short chime before auto-playing the next voice note. */
+export function playVoiceAdvanceSound() {
+  try {
+    unlockAudio();
+    tone({ frequency: 740, duration: 0.06, type: 'sine', volume: 0.045 });
+    tone({ frequency: 980, duration: 0.08, type: 'triangle', volume: 0.04, stagger: 0.05 });
+  } catch {
+    // ignore
+  }
+}

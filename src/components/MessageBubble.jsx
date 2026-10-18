@@ -24,6 +24,7 @@ import { COMPOSER_EMOJIS, QUICK_REACTIONS, isEmojiOnlyText, searchEmojis, splitE
 import { parseGroupPayload } from '../utils/groupPayload.js';
 import { getMessagePreviewText } from '../utils/messagePreview.js';
 import { detectTextDirection } from '../utils/scriptDirection.js';
+import { isConversationVoiceMessage } from '../utils/voiceMessage.js';
 import AttachmentBubble from './AttachmentBubble.jsx';
 import GroupMessageContent from './GroupMessageContent.jsx';
 import LinkifiedText from './LinkifiedText.jsx';
@@ -167,6 +168,8 @@ function MessageBubble({
   onShowInfo,
   onShowEditHistory,
   onImportant,
+  onListened,
+  senderAvatar,
 }) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -225,33 +228,8 @@ function MessageBubble({
   const isDecryptionFail = message.text === null && !isLockedCapsule;
 
   const isVoiceMessage = useMemo(() => {
-    if (message.viewOnceMediaKind === 'audio') return true;
-    if (message.attachment) {
-      const mime = String(message.attachment.mimetype || '').toLowerCase();
-      const name = String(message.attachment.filename || '').toLowerCase();
-      if (
-        mime.startsWith('audio/') ||
-        /^voice-note/i.test(name) ||
-        /\.(mp3|m4a|wav|aac|ogg|oga|opus|flac)$/i.test(name) ||
-        (/\.webm$/i.test(name) && (/^voice-note/i.test(name) || mime.startsWith('audio/')))
-      ) {
-        return true;
-      }
-    }
-    if (message.group && structured?.type === 'file') {
-      const mime = String(structured.payload?.mimetype || '').toLowerCase();
-      const name = String(structured.payload?.filename || '').toLowerCase();
-      if (
-        mime.startsWith('audio/') ||
-        /^voice-note/i.test(name) ||
-        /\.(mp3|m4a|wav|aac|ogg|oga|opus|flac)$/i.test(name) ||
-        (/\.webm$/i.test(name) && (/^voice-note/i.test(name) || mime.startsWith('audio/')))
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }, [message.attachment, message.group, structured, message.viewOnceMediaKind]);
+    return isConversationVoiceMessage(message);
+  }, [message]);
 
   const callMeta = useMemo(() => {
     if (!message.text) return null;
@@ -675,6 +653,8 @@ function MessageBubble({
                   onBurnViewOnce ? () => onBurnViewOnce(message) : undefined
                 }
                 onTranscriptStateChange={onTranscriptStateChange}
+                onListened={onListened}
+                senderAvatar={senderAvatar}
               />
             ) : null}
             {callMeta ? (
@@ -720,6 +700,8 @@ function MessageBubble({
                   onBurnViewOnce ? () => onBurnViewOnce(message) : undefined
                 }
                 onTranscriptStateChange={onTranscriptStateChange}
+                onListened={onListened}
+                senderAvatar={senderAvatar}
               />
             ) : isStoryReaction ? (
               <button
