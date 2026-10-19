@@ -70,6 +70,25 @@ export default function MediaSendPreview({
     }
   }, [open, file]);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleKeyDown(e) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (e.isComposing || e.defaultPrevented) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sending && !compressing) onSend?.();
+      } else if (e.key === 'Escape') {
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sending && !compressing) onClose?.();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, sending, compressing, onSend, onClose]);
+
   if (!open || !file) return null;
 
   const mime = String(file.type || '').toLowerCase();

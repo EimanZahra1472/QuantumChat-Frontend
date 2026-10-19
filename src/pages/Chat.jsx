@@ -109,7 +109,11 @@ import {
   encodePoll,
   extractMentions,
   isGroupAdmin,
+  preferConfirmedThreadText,
 } from "../utils/groupPayload.js";
+import { setVoiceThreadOrder } from "../utils/voicePlaybackQueue.js";
+import useVoiceNoteComposer from "../hooks/useVoiceNoteComposer.js";
+import VoiceNoteBar from "../components/VoiceNoteBar.jsx";
 import {
   getHiddenChatIds,
   hideChat,
@@ -313,8 +317,6 @@ export default function Chat() {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
   const [sendingVoice, setSendingVoice] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [hiddenChatIds, setHiddenChatIds] = useState(() =>
@@ -600,11 +602,6 @@ useEffect(() => {
   const selectedRef = useRef(null);
   const userRef = useRef(user);
   const messagesRef = useRef([]);
-  const mediaRecorderRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const recordChunksRef = useRef([]);
-  const recordTimerRef = useRef(null);
-  const recordStartedAtRef = useRef(0);
   const notifiedCallIdRef = useRef(null);
   const dragCountRef = useRef(0);
    const imageSrcMapRef = useRef(new Map());
@@ -1830,7 +1827,7 @@ useEffect(() => {
             ) {
               next.push({
                 ...confirmed,
-                text: m.text ?? confirmed.text,
+                text: preferConfirmedThreadText(m.text, confirmed.text, { mediaPending: Boolean(m._mediaPending) }),
                 _pending: undefined,
                 _status: undefined,
               });
@@ -2000,6 +1997,32 @@ useEffect(() => {
         };
         return next;
       });
+    }
+
+    function handleMessageListened(payload = {}) {
+      const id = String(payload.messageId || payload.id || "");
+      if (!id) return;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (String(m.id || m._id) === id) {
+            const currentListened = m.listenedBy || [];
+            const userStr = String(payload.userId || payload.user || "");
+            if (userStr && !currentListened.some((e) => String(e.user) === userStr)) {
+              return {
+                ...m,
+                listenedBy: [
+                  ...currentListened,
+                  { user: userStr, at: payload.listenedAt || new Date().toISOString() },
+                ],
+              };
+            }
+            if (payload.listenedBy) {
+              return { ...m, listenedBy: payload.listenedBy };
+            }
+          }
+          return m;
+        }),
+      );
     }
 
     function handleGroupNew(payload = {}) {
@@ -2488,6 +2511,7 @@ useEffect(() => {
     socket.on("message:reaction", handleReaction);
     socket.on("message:edited", handleEdited);
     socket.on("message:view-once-opened", handleViewOnceOpened);
+    socket.on("message:listened", handleMessageListened);
     socket.on("group:new", handleGroupNew);
     socket.on("group:updated", handleGroupUpdated);
     socket.on("group:deleted", handleGroupDeleted);
@@ -2526,6 +2550,7 @@ useEffect(() => {
       socket.off("message:reaction", handleReaction);
       socket.off("message:edited", handleEdited);
       socket.off("message:view-once-opened", handleViewOnceOpened);
+      socket.off("message:listened", handleMessageListened);
       socket.off("group:new", handleGroupNew);
       socket.off("mention:new", handleMentionNew);
       socket.off("notification:new");
@@ -3213,6 +3238,19 @@ useEffect(() => {
     }
     return map;
   }, [users, groups, user, i18n.language]);
+
+  const userById = useMemo(() => {
+    const map = new Map();
+    for (const u of users) map.set(String(u.id), u);
+    for (const g of groups) {
+      for (const m of g.members || []) {
+        const id = memberId(m);
+        const memberUser = m.user || m;
+        if (memberUser && typeof memberUser === "object") map.set(id, memberUser);
+      }
+    }
+    return map;
+  }, [users, groups]);
 
   const selfPeer = useMemo(() => {
     if (!user?.id) return null;
@@ -4443,7 +4481,13 @@ useEffect(() => {
   }
 
   function handleTextareaKeyDown(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if ((e.key === "Enter" || e.keyCode === 13) && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.nativeEvent?.isComposing) return;
+      if (mentionOpen && mentionSuggestions.length > 0) {
+        e.preventDefault();
+        handleMentionSelect(mentionSuggestions[0].username);
+        return;
+      }
       e.preventDefault();
       handleSend(e);
     }
@@ -5038,7 +5082,7 @@ useEffect(() => {
     );
     return undefined;
   }
-  async function sendAttachmentFile(file, { plainBytes, quiet, viewOnce = false, offlineId, skipOutbox = false, offlineEntry } = {}) {
+  async function sendAttachmentFile(file, { plainBytes, quiet, viewOnce = false, offlineId, skipOutbox = false, offlineEntry, waveform, durationSeconds } = {}) {
     if (
       !file ||
       !selected ||
@@ -5068,11 +5112,28 @@ useEffect(() => {
         _id: pendingMessageId,
         from: user.id,
         ...(selected.type === "group" ? { group: selected.id } : { to: selected.id }),
-        text: file.name || "Attachment",
+        text: selected.type === "group"
+          ? encodeGroupFile({
+              attachmentId: uploadId,
+              filename: file.name,
+              mimetype: file.type || "application/octet-stream",
+              size: file.size,
+              waveform,
+              durationSeconds,
+            })
+          : (file.name || "Attachment"),
+        attachment: {
+          id: uploadId,
+          filename: file.name,
+          mimetype: file.type || "application/octet-stream",
+          size: file.size,
+        },
         createdAt: new Date().toISOString(),
         _status: "sending",
         _pending: true,
         _mediaPending: true,
+        ...(Array.isArray(waveform) ? { waveform } : {}),
+        ...(typeof durationSeconds === "number" && durationSeconds > 0 ? { durationSeconds } : {}),
       }];
     });
 
@@ -5156,6 +5217,8 @@ useEffect(() => {
           mimetype:
             attachment.mimetype || file.type || "application/octet-stream",
           size: attachment.size || file.size,
+          waveform,
+          durationSeconds,
         });
         const wantViewOnce = viewOnce && isViewOnceEligibleFile(file);
         await sendGroupPayload(plaintext, {
@@ -5314,6 +5377,8 @@ useEffect(() => {
         forSender,
         attachmentId,
       };
+      if (Array.isArray(waveform)) msgBody.waveform = waveform;
+      if (typeof durationSeconds === "number" && durationSeconds > 0) msgBody.durationSeconds = durationSeconds;
       if (disappearSeconds > 0) msgBody.expiresInSeconds = disappearSeconds;
       const wantViewOnce = viewOnce && isViewOnceEligibleFile(file);
       if (wantViewOnce) msgBody.viewOnce = true;
@@ -5558,7 +5623,7 @@ useEffect(() => {
       !selected ||
       (selected.type !== "dm" && selected.type !== "group") ||
       sendingVoice ||
-      recording
+      voiceComposer.phase !== "idle"
     )
       return;
     const items = e.clipboardData?.items;
@@ -5652,155 +5717,6 @@ useEffect(() => {
     setVideoPlayer({ src: entry.src, filename: entry.alt });
   }
 
-  function clearRecordingResources({ keepChunks = false } = {}) {
-    if (recordTimerRef.current) {
-      clearInterval(recordTimerRef.current);
-      recordTimerRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-    }
-    mediaRecorderRef.current = null;
-    if (!keepChunks) recordChunksRef.current = [];
-    setRecordSeconds(0);
-    setRecording(false);
-  }
-
-  async function startVoiceRecording() {
-    if (
-      !selected ||
-      (selected.type !== "dm" && selected.type !== "group") ||
-      recording ||
-      sendingVoice
-    )
-      return;
-    if (
-      !navigator.mediaDevices?.getUserMedia ||
-      typeof MediaRecorder === "undefined"
-    ) {
-      showToast("Voice notes are not supported in this browser", "error");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-      mediaStreamRef.current = stream;
-      const mimeType = pickRecorderMimeType();
-      const recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      recordChunksRef.current = [];
-      recordStartedAtRef.current = Date.now();
-
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size > 0) recordChunksRef.current.push(event.data);
-      };
-
-      recorder.onerror = () => {
-        clearRecordingResources();
-        showToast("Voice recording failed", "error");
-      };
-
-      recorder.onstop = async () => {
-        const chunks = recordChunksRef.current.slice();
-        const type = (recorder.mimeType || mimeType || "audio/webm").split(
-          ";",
-        )[0];
-        clearRecordingResources();
-        if (!chunks.length) {
-          showToast("No audio captured — try again", "error");
-          return;
-        }
-
-        const blob = new Blob(chunks, { type: type || "audio/webm" });
-        if (blob.size < 256) {
-          showToast("Recording too short — hold a bit longer", "error");
-          return;
-        }
-
-        const ext = type.includes("mp4")
-          ? "m4a"
-          : type.includes("ogg")
-            ? "ogg"
-            : "webm";
-        const file = new File([blob], `voice-note-${Date.now()}.${ext}`, {
-          type: type || "audio/webm",
-        });
-        const plainBytes = new Uint8Array(await blob.arrayBuffer());
-
-        setSendingVoice(true);
-        try {
-          await sendAttachmentFile(file, { plainBytes });
-        } catch (err) {
-          showToast(
-            err.response?.data?.error || "Failed to send voice note",
-            "error",
-          );
-        } finally {
-          setSendingVoice(false);
-        }
-      };
-
-      recorder.start(200);
-      setRecording(true);
-      setRecordSeconds(0);
-      recordTimerRef.current = setInterval(() => {
-        const elapsed = Math.floor(
-          (Date.now() - recordStartedAtRef.current) / 1000,
-        );
-        setRecordSeconds(elapsed);
-        if (elapsed >= MAX_VOICE_SECONDS) {
-          stopVoiceRecording();
-        }
-      }, 200);
-    } catch {
-      clearRecordingResources();
-      showToast("Microphone permission is required for voice notes", "error");
-    }
-  }
-
-  function stopVoiceRecording() {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
-      clearRecordingResources();
-      return;
-    }
-    try {
-      if (recorder.state === "recording") recorder.requestData();
-    } catch {
-      // ignore
-    }
-    recorder.stop();
-  }
-
-  function cancelVoiceRecording() {
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.ondataavailable = null;
-      recorder.onstop = () => clearRecordingResources();
-      try {
-        recorder.stop();
-      } catch {
-        clearRecordingResources();
-      }
-      return;
-    }
-    clearRecordingResources();
-  }
-
-  useEffect(() => {
-    return () => {
-      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-      if (mediaStreamRef.current)
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
   useEffect(() => {
     if (!pendingJumpMessageId) return;
     const el = document.getElementById(`msg-${pendingJumpMessageId}`);
@@ -6146,6 +6062,36 @@ useEffect(() => {
     }
   }
 
+  useEffect(() => {
+    setVoiceThreadOrder(messages.map((m) => m.id || m._id));
+  }, [messages]);
+
+  const handleVoiceListened = useCallback(async (messageId) => {
+    if (!messageId || !user?.id) return;
+    try {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (String(m.id || m._id) === String(messageId)) {
+            const currentListened = m.listenedBy || [];
+            if (!currentListened.some((e) => String(e.user) === String(user.id))) {
+              return {
+                ...m,
+                listenedBy: [
+                  ...currentListened,
+                  { user: String(user.id), at: new Date().toISOString() },
+                ],
+              };
+            }
+          }
+          return m;
+        }),
+      );
+      await client.post(`/messages/${messageId}/listened`);
+    } catch {
+      // silent
+    }
+  }, [user?.id]);
+
   async function handleReactMessage(messageId, emoji) {
     if (!messageId || !emoji || !selected) return;
     try {
@@ -6413,6 +6359,51 @@ useEffect(() => {
     () => Boolean(activeGroup && isGroupAdmin(activeGroup, user.id)),
     [activeGroup, user.id],
   );
+
+  const voiceComposer = useVoiceNoteComposer({
+    maxSeconds: MAX_VOICE_SECONDS,
+    disabled:
+      sendingVoice ||
+      uploads.length > 0 ||
+      (selected?.type === "group" && !canPostInGroup),
+  });
+
+  const handleVoiceSend = useCallback(async () => {
+    if (sendingVoice) return;
+    setSendingVoice(true);
+    try {
+      let payload = voiceComposer.previewMeta;
+      if (!payload && voiceComposer.phase !== "idle" && voiceComposer.phase !== "preview") {
+        const res = await voiceComposer.stopAndGetPayload();
+        if (res?.error) {
+          showToast(res.error, "error");
+          return;
+        }
+        payload = res?.data;
+      }
+      if (!payload?.file) return;
+
+      await sendAttachmentFile(payload.file, {
+        plainBytes: payload.plainBytes,
+        waveform: payload.waveform,
+        durationSeconds: payload.durationSeconds,
+      });
+      voiceComposer.reset();
+    } catch (err) {
+      showToast(
+        err.response?.data?.error || err.message || "Failed to send voice note",
+        "error",
+      );
+    } finally {
+      setSendingVoice(false);
+    }
+  }, [sendingVoice, voiceComposer]);
+
+  useEffect(() => {
+    voiceComposer.cancelRecording();
+    voiceComposer.discardPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.key]);
 
   function mentionBlockReason(m) {
     const policy = m.privacy?.groupMentions || "everyone";
@@ -7405,6 +7396,16 @@ useEffect(() => {
                                   }
                                   : undefined
                               }
+                              onListened={handleVoiceListened}
+                              senderAvatar={
+                                String(m.from) !== String(user.id)
+                                  ? {
+                                      userId: String(m.from),
+                                      name: usernameById.get(String(m.from)) || "User",
+                                      hasAvatar: Boolean(userById.get(String(m.from))?.hasAvatar || userById.get(String(m.from))?.avatarUrl),
+                                    }
+                                  : undefined
+                              }
                             />
                           </div>
                         );
@@ -7493,49 +7494,33 @@ useEffect(() => {
                     );
                   })()}
 
-                {recording ? (
-                  <div className="composer composer-recording">
-                    <button
-                      type="button"
-                      className="attach-button voice-cancel-btn"
-                      onClick={cancelVoiceRecording}
-                      aria-label="Cancel voice note"
-                    >
-                      <X size={20} strokeWidth={2} aria-hidden="true" />
-                    </button>
-                    <div className="voice-recording-status">
-                      <span className="voice-recording-dot" />
-                      <span>Recording {formatVoiceTimer(recordSeconds)}</span>
-                      <span className="voice-recording-hint">
-                        max {MAX_VOICE_SECONDS}s
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="send-button voice-stop-btn"
-                      onClick={stopVoiceRecording}
-                      aria-label="Send voice note"
-                    >
-                      <Square
-                        size={16}
-                        fill="currentColor"
-                        strokeWidth={0}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </div>
-                ) : !canPostInGroup ? (
-                  <div className="composer-shell">
+                <div className="composer-shell">
+                  {voiceComposer.phase !== "idle" ? (
+                    <VoiceNoteBar
+                      phase={voiceComposer.phase}
+                      seconds={voiceComposer.seconds}
+                      levels={voiceComposer.levels}
+                      paused={voiceComposer.paused}
+                      previewUrl={voiceComposer.previewUrl}
+                      previewMeta={voiceComposer.previewMeta}
+                      maxSeconds={MAX_VOICE_SECONDS}
+                      sending={sendingVoice}
+                      onCancel={voiceComposer.cancelRecording}
+                      onStop={voiceComposer.stopToPreview}
+                      onDiscard={voiceComposer.discardPreview}
+                      onTogglePause={voiceComposer.togglePause}
+                      onSend={handleVoiceSend}
+                    />
+                  ) : !canPostInGroup ? (
                     <div
                       className="composer-hint"
                       style={{ justifyContent: "center", padding: "14px" }}
                     >
                       Only admins can post in this group
                     </div>
-                  </div>
-                ) : (
-                  <div className="composer-shell">
-                    {showEmojiPicker && (
+                  ) : (
+                    <>
+                      {showEmojiPicker && (
                       <EmojiPicker
                         onPick={insertEmoji}
                         onClose={() => setShowEmojiPicker(false)}
@@ -7731,16 +7716,22 @@ useEffect(() => {
                         <button
                           type="button"
                           className="send-button voice-mic-btn"
-                          onClick={startVoiceRecording}
                           aria-label="Record voice note"
+                          title="Record voice note"
                           disabled={sendingVoice || uploads.length > 0}
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            const res = await voiceComposer.startRecording();
+                            if (res?.error) showToast(res.error, "error");
+                          }}
                         >
                           <Mic size={18} strokeWidth={2} aria-hidden="true" />
                         </button>
                       )}
                     </form>
-                  </div>
+                  </>
                 )}
+              </div>
               </>
             )}
           </>

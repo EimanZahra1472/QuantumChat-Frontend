@@ -201,6 +201,8 @@ export default function AttachmentBubble({
   viewOnceMediaKind = null,
   onBurnViewOnce,
   onTranscriptStateChange,
+  onListened,
+  senderAvatar,
 }) {
   const attachment = normalizeAttachment(rawAttachment);
   const [status, setStatus] = useState('idle');
@@ -568,6 +570,17 @@ export default function AttachmentBubble({
   if (!attachment) return null;
 
   if (!opened) {
+    if (kind === 'audio' && (message?._status === 'sending' || message?._pending)) {
+      return (
+        <div className="voice-attachment-wrap voice-optimistic-sending">
+          <VoicePlayer
+            isMine={true}
+            waveform={message.waveform}
+            durationSeconds={message.durationSeconds}
+          />
+        </div>
+      );
+    }
     return (
       <div className="attachment-chip attachment-chip-disabled">
         <span className="attachment-filename">
@@ -677,9 +690,23 @@ export default function AttachmentBubble({
   }
 
   if (kind === 'audio' && objectUrl) {
+    const isListened = isMine
+      ? Boolean((message?.listenedBy || []).length)
+      : Boolean((message?.listenedBy || []).some((e) => String(e.user) === String(currentUserId)));
+
     return (
       <div className="voice-attachment-wrap">
-        <VoicePlayer url={objectUrl} onPlayedThrough={viewOnce ? onBurnViewOnce : undefined} isMine={isMine} />
+        <VoicePlayer
+          url={objectUrl}
+          onPlayedThrough={viewOnce ? onBurnViewOnce : undefined}
+          isMine={isMine}
+          messageId={message?.id || message?._id}
+          listened={isListened}
+          onListened={onListened ? () => onListened(message?.id || message?._id) : undefined}
+          senderAvatar={!isMine ? senderAvatar : undefined}
+          waveform={message?.waveform}
+          durationSeconds={message?.durationSeconds}
+        />
         {message && !viewOnce && (
           <div className="transcript-action-panel" aria-live="polite">
             {transcriptStatus === 'completed' && hasTranscript ? (

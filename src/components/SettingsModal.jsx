@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Languages, Search } from 'lucide-react';
+import { Languages, Search, X } from 'lucide-react';
 import client, { getMyReferrals, unmuteChat, updatePrivacySettings } from '../api/client.js';
 
 import {
@@ -129,6 +129,9 @@ export default function SettingsModal({
   const avatarInputRef = useRef(null);
   const [tab, setTab] = useState(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
+  const [noSearchResults, setNoSearchResults] = useState(false);
+  const searchQueryRef = useRef('');
+  searchQueryRef.current = searchQuery;
 
   const TAB_ITEMS = [
     {
@@ -248,36 +251,69 @@ export default function SettingsModal({
   const bodyRef = useRef(null);
 
   useEffect(() => {
-    const container = bodyRef.current;
-    if (!container) return;
-    
-    const query = searchQuery.trim().toLowerCase();
-    
-    const blocks = container.querySelectorAll('.settings-section > div, .settings-section > button, .settings-section > ul');
-    
-    blocks.forEach(block => {
-      block.style.display = '';
-      const items = block.querySelectorAll('.settings-field, .settings-row, .settings-skin-card, .privacy-friend-item, .settings-lang-card, li');
-      items.forEach(item => item.style.display = '');
+    const timer = setTimeout(() => {
+      const container = bodyRef.current;
+      if (!container) return;
 
-      if (!query) return;
+      const query = searchQuery.trim().toLowerCase();
 
-      if (!block.textContent.toLowerCase().includes(query)) {
-        block.style.display = 'none';
+      // Reset all visibility first
+      const allSections = container.querySelectorAll('.settings-section');
+      allSections.forEach(section => (section.style.display = ''));
+
+      const blocks = container.querySelectorAll(
+        '.settings-section > div, .settings-section > button, .settings-section > ul'
+      );
+
+      blocks.forEach(block => {
+        block.style.display = '';
+        const items = block.querySelectorAll(
+          '.settings-field, .settings-row, .settings-skin-card, .privacy-friend-item, .settings-lang-card, .privacy-select-group, .settings-export-card, .settings-totp-setup-box, .settings-blindness-card, .settings-toggle-tile, .settings-subdivider, li'
+        );
+        items.forEach(item => (item.style.display = ''));
+      });
+
+      if (!query) {
+        setNoSearchResults(false);
         return;
       }
 
-      const title = block.querySelector('.settings-section-title, h3, h4, strong');
-      if (title && title.textContent.toLowerCase().includes(query)) {
-        return; 
-      }
-
-      items.forEach(item => {
-        if (!item.textContent.toLowerCase().includes(query)) {
-          item.style.display = 'none';
+      blocks.forEach(block => {
+        if (!block.textContent.toLowerCase().includes(query)) {
+          block.style.display = 'none';
+          return;
         }
+
+        const title = block.querySelector('.settings-section-title, h3, h4, strong');
+        if (title && title.textContent.toLowerCase().includes(query)) {
+          return;
+        }
+
+        const items = block.querySelectorAll(
+          '.settings-field, .settings-row, .settings-skin-card, .privacy-friend-item, .settings-lang-card, .privacy-select-group, .settings-export-card, .settings-totp-setup-box, .settings-blindness-card, .settings-toggle-tile, li'
+        );
+        items.forEach(item => {
+          if (!item.textContent.toLowerCase().includes(query)) {
+            item.style.display = 'none';
+          }
+        });
       });
-    });
+
+      // Hide sections where every child block is hidden
+      let globalHasMatch = false;
+      allSections.forEach(section => {
+        const childBlocks = Array.from(section.children).filter(el =>
+          ['DIV', 'BUTTON', 'UL'].includes(el.tagName)
+        );
+        const hasVisible = childBlocks.some(b => b.style.display !== 'none');
+        section.style.display = hasVisible ? '' : 'none';
+        if (hasVisible) globalHasMatch = true;
+      });
+
+      setNoSearchResults(!globalHasMatch);
+    }, 150);
+
+    return () => clearTimeout(timer);
   }, [searchQuery, tab]);  
 
   const [activeLang, setActiveLang] = useState(() => user?.preferredLanguage || i18n.language || 'en');
@@ -403,7 +439,13 @@ export default function SettingsModal({
     document.body.style.overflow = 'hidden';
     (closeRef.current || closeMobileRef.current)?.focus();
     function onKeyDown(e) {
-      if (e.key === 'Escape') onCloseRef.current?.();
+      if (e.key === 'Escape') {
+        if (searchQueryRef.current) {
+          setSearchQuery('');
+        } else {
+          onCloseRef.current?.();
+        }
+      }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => {
@@ -1180,26 +1222,39 @@ export default function SettingsModal({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="qc-settings-search-input"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="qc-settings-search-clear"
+                  onClick={() => setSearchQuery('')}
+                  aria-label={t('common.clear', 'Clear search')}
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
           </div>
 
           {/* Mobile-only Search Box */}
-          <div className="settings-search-bar qc-settings-mobile-search" style={{ padding: '0 24px 12px 24px', position: 'relative' }}>
-            <Search size={16} style={{ position: 'absolute', insetInlineStart: 36, top: 10, color: 'var(--text-muted)' }} />
+          <div className="settings-search-bar qc-settings-mobile-search">
+            <Search size={16} className="qc-settings-mobile-search-icon" aria-hidden="true" />
             <input 
               type="text" 
               placeholder={t('common.search', 'Search settings...')} 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ 
-                width: '100%', 
-                padding: '8px 12px 8px 36px', 
-                borderRadius: '8px',
-                border: '1px solid var(--border-subtle)',
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-primary)'
-              }}
+              className="qc-settings-mobile-search-input"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                className="qc-settings-search-clear"
+                onClick={() => setSearchQuery('')}
+                aria-label={t('common.clear', 'Clear search')}
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
 
           {/* Tab Navigation List */}
@@ -1245,10 +1300,14 @@ export default function SettingsModal({
           <header className="qc-settings-desktop-header">
             <div className="settings-modal-heading">
               <h2 className="qc-settings-active-title">
-                {currentTabMeta?.label || t('settings.title', 'Settings')}
+                {searchQuery
+                  ? t('settings.searchResults', 'Search Results')
+                  : (currentTabMeta?.label || t('settings.title', 'Settings'))}
               </h2>
               <p className="qc-settings-active-subtitle">
-                {tabSubtitles[tab] || t('settings.subtitle', 'Profile, privacy, security, and app preferences')}
+                {searchQuery
+                  ? `Showing matches for "${searchQuery}"`
+                  : (tabSubtitles[tab] || t('settings.subtitle', 'Profile, privacy, security, and app preferences'))}
               </p>
             </div>
             <button
@@ -3082,7 +3141,7 @@ export default function SettingsModal({
             </section>
           )}
 
-          {tab === 'invite' && (
+          {(tab === 'invite' || searchQuery) && (
             <section className="settings-section">
               <div className="settings-fieldset">
                 <h3 className="settings-section-title">Invite friends</h3>
@@ -3159,6 +3218,14 @@ export default function SettingsModal({
       </div>
     </section>
   )}
+
+          {searchQuery && noSearchResults && (
+            <div className="settings-no-results">
+              <Search size={40} />
+              <h3>{t('settings.noResults', 'No settings found')}</h3>
+              <p>{t('settings.noResultsHint', 'No results for "{{query}}". Try a different term.', { query: searchQuery })}</p>
+            </div>
+          )}
 </div>
 </main>
 </div>
