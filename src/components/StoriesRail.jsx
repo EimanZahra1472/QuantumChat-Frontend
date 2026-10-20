@@ -1,7 +1,8 @@
-import { BookmarkPlus, Camera, ChevronRight, Eye, FilePen, Forward, ImagePlus, Mic, Paperclip, Pencil, Repeat2, Send, Share2, Smile, Square, Type, X } from 'lucide-react';
+import { BookmarkPlus, Camera, ChevronRight, Eye, FilePen, Forward, ImagePlus, Mic, Paperclip, Pencil, Radio, Repeat2, Send, Share2, Smile, Square, Type, X } from 'lucide-react';
 import { forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import client from '../api/client.js';
+import '../styles/liveStream.css';
 import { connectSocket, getSocket } from '../api/socket.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { KEY_SET_SIZE, pickRandom, sealBytes, sealMessage } from '../crypto/keys.js';
@@ -170,7 +171,10 @@ function formatRemaining(expiresAtStr) {
   return remHours ? `${days}d ${remHours}h left` : `${days}d left`;
 }
 
-const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], onError, notifSettings }, ref) {
+const StoriesRail = forwardRef(function StoriesRail(
+  { currentUser, users = [], onError, notifSettings, liveStreams = [], onGoLive, onWatchLive },
+  ref
+) {
   const { keyringInSync, keyringNeedsResync, refreshUserFromServer, verifyKeySync } = useAuth();
   const [stories, setStories] = useState([]);
   const [storiesLoading, setStoriesLoading] = useState(true);
@@ -707,6 +711,9 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
     setUnavailable(false);
     setViewer({ group: { user: currentUser, items }, index });
   }
+  const liveRings = useMemo(() => liveStreams.filter((s) => !s.isHost), [liveStreams]);
+  const liveHostIds = useMemo(() => new Set(liveRings.map((s) => String(s.host?.id))), [liveRings]);
+
   useImperativeHandle(ref, () => ({
     async openStoryById(storyId) {
       try {
@@ -783,9 +790,28 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
           </div>
         ))}
 
+      {liveRings.map((s) => {
+        const name = s.host?.displayName || s.host?.username || 'Friend';
+        return (
+          <button
+            key={`live-${s.id}`}
+            type="button"
+            className="story-ring live"
+            onClick={() => onWatchLive?.(s.id)}
+            title={s.title ? `${name}: ${s.title}` : `${name} is live`}
+            aria-label={`Watch ${name}'s live video${s.title ? `: ${s.title}` : ''}`}
+          >
+            <UserAvatar userId={s.host?.id} name={name} hasAvatar={s.host?.hasAvatar} size="story" />
+            <span className="live-badge story-ring-live-badge">LIVE</span>
+            <span className="story-ring-label">{name}</span>
+          </button>
+        );
+      })}
+
       {!storiesLoading &&
         grouped
           .filter((g) => String(g.user?.id) !== String(currentUser?.id))
+          .filter((g) => !liveHostIds.has(String(g.user?.id)))
           .map((g) => {
             const hasSealed = g.items.some((s) => s.sealed);
             return (
@@ -910,7 +936,7 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
               <div className="status-create-header">
                 <div className="status-create-heading-wrap">
                   <h2 className="status-create-title">Add status</h2>
-                  <p className="status-create-subtitle">Share a photo, video, voice note, or text</p>
+                  <p className="status-create-subtitle">Share a photo, video, voice note, text, or go live</p>
                 </div>
                 <button
                   type="button"
@@ -942,6 +968,27 @@ const StoriesRail = forwardRef(function StoriesRail({ currentUser, users = [], o
                     <ChevronRight size={16} aria-hidden />
                   </span>
                 </button>
+                {typeof onGoLive === 'function' ? (
+                  <button
+                    type="button"
+                    className="status-create-option live-opt"
+                    onClick={() => {
+                      setCreateSheetOpen(false);
+                      onGoLive();
+                    }}
+                  >
+                    <span className="status-create-icon live">
+                      <Radio size={22} aria-hidden />
+                    </span>
+                    <span className="status-create-copy">
+                      <strong>Go live</strong>
+                      <small>Broadcast live video to friends or a group</small>
+                    </span>
+                    <span className="status-create-arrow">
+                      <ChevronRight size={16} aria-hidden />
+                    </span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="status-create-option audio-opt"
