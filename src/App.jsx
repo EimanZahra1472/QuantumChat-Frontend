@@ -56,6 +56,7 @@ export default function App() {
               <Route path="/chat/settings" element={<ProtectedChat />} />
               <Route path="/chat/settings/:tab" element={<ProtectedChat />} />
               <Route path="/chat/g/:groupId" element={<ProtectedChat />} />
+              <Route path="/chat/live/:streamId" element={<ProtectedChat />} />
               <Route path="/chat/:peerId" element={<ProtectedChat />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

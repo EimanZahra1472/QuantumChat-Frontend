@@ -5,6 +5,7 @@ import ConversationList from '../ConversationList.jsx';
 import NotificationPermissionBanner from '../NotificationPermissionBanner.jsx';
 import SidebarMenu from '../SidebarMenu.jsx';
 import StoriesRail from '../StoriesRail.jsx';
+import LiveNowRail from '../live/LiveNowRail.jsx';
 
 /**
  * Left conversation pane — list, filters, stories.
@@ -32,6 +33,9 @@ export default function ConversationPane({
   selectedKey,
   onSelect,
   onCreateGroup,
+  liveStreams = [],
+  onGoLive,
+  onWatchLive,
   onDiscoverJoin,
   onHide,
   onBlock,
@@ -106,6 +110,7 @@ export default function ConversationPane({
               onError={onStoriesError}
               notifSettings={notifSettings}
             />
+            <LiveNowRail streams={liveStreams} onGoLive={onGoLive} onWatch={onWatchLive} />
             <div className="sidebar-search">
               <input
                 placeholder={t('nav.searchChats', 'Search conversations…')}

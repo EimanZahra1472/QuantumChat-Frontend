@@ -80,6 +80,13 @@ function toActivityItem(n, groupNames) {
         ...base, type: 'missed_call', callType: meta.callType,
         route: base.actorId ? `/chat/${base.actorId}` : null,
       };
+    case 'LIVE_STARTED': {
+      const streamId = meta.streamId || n.entityId;
+      return {
+        ...base, type: 'live', title: meta.title || '', invited: Boolean(meta.invited),
+        route: streamId ? `/chat/live/${streamId}` : '/chat',
+      };
+    }
     case 'GROUP_EVENT': {
       const gid = meta.groupId ? String(meta.groupId) : '';
       return {

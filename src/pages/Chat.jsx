@@ -77,6 +77,8 @@ import {
   pickRecorderMimeType,
 } from "../crypto/voiceCache.js";
 import useMeetingCall from "../hooks/useMeetingCall.js";
+import useLiveStream from "../hooks/useLiveStream.js";
+import { listLive } from "../api/live.js";
 import { useScreenshotProtection } from "../hooks/useScreenshotProtection.js";
 import useWebRTCCall from "../hooks/useWebRTCCall.js";
 import { getWallpaperBackground, getWallpaperFx, preloadWallpaper } from '../theme/wallpaperBackgrounds.js';
@@ -176,6 +178,8 @@ const GroupSettingsModal = lazy(() => import("../components/GroupSettingsModal.j
 const GroupCommandCenter = lazy(() => import("../components/GroupCommandCenter.jsx"));
 const ImageLightbox = lazy(() => import("../components/ImageLightbox.jsx"));
 const MeetingOverlay = lazy(() => import("../components/MeetingOverlay.jsx"));
+const GoLiveModal = lazy(() => import("../components/live/GoLiveModal.jsx"));
+const LiveStreamOverlay = lazy(() => import("../components/live/LiveStreamOverlay.jsx"));
 const MessageInfoModal = lazy(() => import("../components/MessageInfoModal.jsx"));
 const SettingsModal = lazy(() => import("../components/SettingsModal.jsx"));
 const StarredMessagesModal = lazy(() => import("../components/StarredMessagesModal.jsx"));
@@ -1011,6 +1015,104 @@ useEffect(() => {
     },
   });
 
+  // ---- Live streaming --------------------------------------------------
+  const liveCall = useLiveStream({ user });
+  const [liveStreams, setLiveStreams] = useState([]);
+  const [showGoLive, setShowGoLive] = useState(false);
+  const liveCallLiveRef = useRef(null);
+  liveCallLiveRef.current = liveCall.live;
+  // loadMyFriends is declared further down; the go-live picker needs it.
+  const loadMyFriendsRef = useRef(null);
+
+  const refreshLiveStreams = useCallback(async () => {
+    try {
+      setLiveStreams(await listLive());
+    } catch {
+      /* keep the last list */
+    }
+  }, []);
+
+  const watchLive = useCallback(
+    async (streamId) => {
+      if (webrtc.call || meetingCall.meeting) {
+        showToast("Finish your call before joining a live video", "info");
+        return;
+      }
+      try {
+        await liveCall.watch(streamId);
+      } catch (err) {
+        const status = err?.response?.status;
+        showToast(
+          status === 410
+            ? "This live video has ended"
+            : status === 403
+              ? "You can't watch this live video"
+              : err?.response?.data?.error || err?.message || "Could not join the live video",
+          status === 410 ? "info" : "error",
+        );
+        refreshLiveStreams();
+      }
+    },
+    [liveCall, meetingCall.meeting, refreshLiveStreams, showToast, webrtc.call],
+  );
+  const watchLiveRef = useRef(watchLive);
+  watchLiveRef.current = watchLive;
+
+  const openGoLive = useCallback(() => {
+    if (liveCall.live) return;
+    if (webrtc.call || meetingCall.meeting) {
+      showToast("Finish your call before going live", "info");
+      return;
+    }
+    loadMyFriendsRef.current?.();
+    setShowGoLive(true);
+  }, [liveCall.live, meetingCall.meeting, showToast, webrtc.call]);
+
+  // "Live now" list: on load, every 30s, and whenever the server tells us
+  // someone in our audience went live / ended (socket only — REST-only
+  // deployments rely on the poll).
+  useEffect(() => {
+    if (!hasLocalKeyring || !user?.id) return undefined;
+    refreshLiveStreams();
+    const timer = window.setInterval(refreshLiveStreams, 30_000);
+    const socket = getSocket();
+    function onStarted(stream) {
+      refreshLiveStreams();
+      const name = stream?.host?.displayName || stream?.host?.username || "A friend";
+      if (!stream?.id || liveCallLiveRef.current) return;
+      showToast(`${name} is live${stream.title ? `: ${stream.title}` : ""}`, "info", 8000, {
+        actionLabel: "Watch",
+        onAction: () => watchLiveRef.current(stream.id),
+      });
+    }
+    function onInvited(stream) {
+      refreshLiveStreams();
+      const name = stream?.host?.displayName || stream?.host?.username || "A friend";
+      if (!stream?.id || liveCallLiveRef.current) return;
+      showToast(`${name} invited you to their live video`, "info", 10000, {
+        actionLabel: "Watch",
+        onAction: () => watchLiveRef.current(stream.id),
+      });
+    }
+    socket?.on("live:started", onStarted);
+    socket?.on("live:invited", onInvited);
+    socket?.on("live:ended", refreshLiveStreams);
+    return () => {
+      window.clearInterval(timer);
+      socket?.off("live:started", onStarted);
+      socket?.off("live:invited", onInvited);
+      socket?.off("live:ended", refreshLiveStreams);
+    };
+  }, [hasLocalKeyring, user?.id, refreshLiveStreams, showToast]);
+
+  // /chat/live/:streamId — opened from a go-live notification.
+  useEffect(() => {
+    if (!params.streamId || !hasLocalKeyring) return;
+    const id = params.streamId;
+    navigate("/chat", { replace: true });
+    watchLiveRef.current(id);
+  }, [params.streamId, hasLocalKeyring, navigate]);
+
   const bumpActivity = useCallback(() => setActivityTick((n) => n + 1), []);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
@@ -1360,6 +1462,7 @@ useEffect(() => {
       setMyFriendsLoading(false);
     }
   }, []);
+  loadMyFriendsRef.current = loadMyFriends;
 
   /** Instantly reflect an accepted friendship (socket or poll) — no page reload. */
   const applyAcceptedFriendship = useCallback(
@@ -6642,6 +6745,9 @@ useEffect(() => {
         selectedKey={selected?.key}
         onSelect={handleSelectConversation}
         onCreateGroup={() => setShowCreateGroup(true)}
+        liveStreams={liveStreams}
+        onGoLive={openGoLive}
+        onWatchLive={watchLive}
         onDiscoverJoin={handleDiscoverJoin}
         onHide={handleHideChat}
         onBlock={handleBlockUser}
@@ -7901,6 +8007,66 @@ useEffect(() => {
                 )
               }
               onOpenAddParticipant={() => setShowAddParticipantModal(true)}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
+
+      {showGoLive && !liveCall.live && (
+        <LazyChunkErrorBoundary onClose={() => setShowGoLive(false)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <GoLiveModal
+              friends={myFriends}
+              groups={groups}
+              defaultGroupId={selected?.type === "group" ? String(selected.id) : ""}
+              onClose={() => setShowGoLive(false)}
+              onStart={async (opts) => {
+                await liveCall.startBroadcast(opts);
+                setShowGoLive(false);
+                refreshLiveStreams();
+              }}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
+
+      {Boolean(liveCall.live) && (
+        <LazyChunkErrorBoundary onClose={liveCall.leave}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <LiveStreamOverlay
+              live={liveCall.live}
+              localStream={liveCall.localStream}
+              remoteStream={liveCall.remoteStream}
+              viewerCount={liveCall.viewerCount}
+              viewers={liveCall.viewers}
+              comments={liveCall.comments}
+              reactions={liveCall.reactions}
+              muted={liveCall.muted}
+              cameraOff={liveCall.cameraOff}
+              connection={liveCall.connection}
+              recording={liveCall.recording}
+              friends={myFriends}
+              onEnd={() => {
+                liveCall.endBroadcast().finally(refreshLiveStreams);
+              }}
+              onLeave={() => {
+                liveCall.leave();
+                refreshLiveStreams();
+              }}
+              onReconnect={liveCall.reconnect}
+              onComment={liveCall.postComment}
+              onReaction={liveCall.sendReaction}
+              onToggleComments={liveCall.setAllowComments}
+              onToggleMute={liveCall.toggleMute}
+              onToggleCamera={liveCall.toggleCamera}
+              onInvite={liveCall.inviteViewers}
+              onRemoveViewer={(viewerId) =>
+                liveCall.removeViewer(viewerId).catch(() =>
+                  showToast("Could not remove viewer", "error"),
+                )
+              }
+              onSaveRecording={liveCall.saveRecording}
+              onDiscardRecording={liveCall.discardRecording}
             />
           </Suspense>
         </LazyChunkErrorBoundary>

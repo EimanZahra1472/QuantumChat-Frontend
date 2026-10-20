@@ -2334,6 +2334,15 @@ export default function SettingsModal({
                   onChange={(v) => updateNotifField('birthdayReminders', v)}
                   showStatusBadge={true}
                 />
+
+                <ToggleRow
+                  label="Live Video Alerts"
+                  hint="Get notified when a friend or one of your groups goes live"
+                  checked={notifSettings.liveNotifications !== false}
+                  disabled={busy}
+                  onChange={(v) => updateNotifField('liveNotifications', v)}
+                  showStatusBadge={true}
+                />
               </div>
 
               {/* Group 4: Desktop & Web Notifications */}

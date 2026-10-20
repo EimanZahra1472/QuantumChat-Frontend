@@ -647,3 +647,4 @@ body.theme-light .activity-item-icon.type-default {
 .activity-item-icon.type-message { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
 .activity-item-icon.type-story_mention { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
 .activity-item-icon.type-missed_call { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+.activity-item-icon.type-live { background: rgba(229, 38, 61, 0.15); color: #f05266; }
