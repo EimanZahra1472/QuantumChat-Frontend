@@ -4,6 +4,7 @@ import {
   Bell, ChevronRight,
   MessageCircle,
   PhoneMissed,
+  Radio,
   SmilePlus,
   Tag,
   UserPlus, Users,
@@ -17,6 +18,7 @@ const ICONS = {
   message: MessageCircle,
   story_mention: Tag,
   missed_call: PhoneMissed,
+  live: Radio,
 };
 
 export default function ActivityItem({ item = {}, onOpen = () => {} }) {
@@ -42,6 +44,11 @@ export default function ActivityItem({ item = {}, onOpen = () => {} }) {
       break;
     case 'missed_call':
       title = `Missed ${item.callType === 'video' ? 'video ' : ''}call from ${actor}`;
+      break;
+    case 'live':
+      title = item.invited
+        ? `${actor} invited you to watch their live video`
+        : `${actor} went live${item.title ? `: ${item.title}` : ''}`;
       break;
     case 'reaction':
       title = `${actor} reacted${item.emoji ? ` ${item.emoji}` : ''} to ${originalAuthor} message`;
