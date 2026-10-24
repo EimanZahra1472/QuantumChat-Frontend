@@ -2719,7 +2719,63 @@ input:focus-visible,
 }
 
 .sidebar-create-row {
+  display: flex;
+  gap: 8px;
   padding: 0 16px 12px;
+}
+
+.sidebar-create-row .create-group-btn {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* Header shown above the list while a user folder is the active filter. */
+.folder-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 10px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--radius-md, 12px);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.folder-bar-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.folder-bar-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.folder-bar-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.folder-bar-edit:hover {
+  background: var(--bg-surface);
 }
 
 .create-group-btn {
@@ -13415,6 +13471,39 @@ button.message-reply-preview:hover {
   letter-spacing: 0.08em;
   line-height: 1;
   text-transform: uppercase;
+}
+
+.conv-row-dropdown-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.conv-row-dropdown-subtitle {
+  padding-top: 4px;
+}
+
+.conv-row-dropdown .conv-folder-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+
+.conv-row-dropdown button svg.conv-folder-check {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+}
+
+.conv-row-dropdown .conv-folder-item.is-checked > svg:first-child {
+  color: var(--accent);
+  background: var(--accent-muted);
 }
 
 .conv-row-dropdown button {

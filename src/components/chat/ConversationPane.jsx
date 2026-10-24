@@ -42,6 +42,10 @@ export default function ConversationPane({
   onArchive,
   onPin,
   onToggleVault,
+  chatFolders = [],
+  onCreateFolder,
+  onEditFolder,
+  onToggleChatInFolder,
   loadingUsers,
     hasMoreContacts,
   onLoadMoreContacts,
@@ -138,6 +142,10 @@ export default function ConversationPane({
             onArchive={onArchive}
             onPin={onPin}
             onToggleVault={onToggleVault}
+            chatFolders={chatFolders}
+            onCreateFolder={onCreateFolder}
+            onEditFolder={onEditFolder}
+            onToggleChatInFolder={onToggleChatInFolder}
             loading={loadingUsers}
             searchQuery={search}
             friendCandidates={friendCandidates}

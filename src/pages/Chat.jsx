@@ -24,7 +24,14 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { streamQuantumAI } from "../api/aiClient.js";
 import { fetchChatTheme, fetchGroupChatTheme, fetchGroupWallpaperImageUrl, fetchThemeCatalog, fetchWallpaperImageUrl } from '../api/chatThemes.js';
-import client, { muteChat, unmuteChat } from "../api/client.js";
+import client, {
+  createChatFolder,
+  deleteChatFolder,
+  muteChat,
+  setChatFolderMembership,
+  unmuteChat,
+  updateChatFolder,
+} from "../api/client.js";
 import { getUnreadCount as fetchUnreadNotificationCount } from "../api/notifications.js";
 import { postPresenceHeartbeat } from "../api/presence.js";
 import { connectSocket, getSocket } from "../api/socket.js";
@@ -169,6 +176,7 @@ import { playReceiveSound, playSendSound, startIncomingRingSound, unlockAudio } 
 
 const AIAssistantPanel = lazy(() => import("../components/AIAssistantPanel.jsx"));
 const CameraCapture = lazy(() => import("../components/CameraCapture.jsx"));
+const ChatFolderModal = lazy(() => import("../components/ChatFolderModal.jsx"));
 const ChatMediaModal = lazy(() => import("../components/chat/ChatMediaModal.jsx"));
 const ChatThemeModal = lazy(() => import("../components/ChatThemeModal.jsx"));
 const CreateGroupModal = lazy(() => import("../components/CreateGroupModal.jsx"));
@@ -312,6 +320,9 @@ export default function Chat() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [showCreateGroup, setShowCreateGroup] = useState(false);
+  // { folder: existing folder | null, initialKeys: string[] } while the
+  // create/edit folder dialog is open.
+  const [folderEditor, setFolderEditor] = useState(null);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
@@ -3452,7 +3463,7 @@ useEffect(() => {
     },
   });
 
-  const conversations = useMemo(() => {
+  const conversationItems = useMemo(() => {
     const q = search.trim().toLowerCase();
     const hidden = new Set(hiddenChatIds);
     const items = [];
@@ -3597,15 +3608,6 @@ useEffect(() => {
       ) {
         return false;
       }
-      if (filter === "archived") {
-        if (!archived.has(String(c.key))) return false;
-      } else if (archived.has(String(c.key))) {
-        return false;
-      }
-      if (filter === "discover") return false;
-      if (filter === "groups" && c.type !== "group") return false;
-      if (filter === "unread" && !c.unread) return false;
-      if (!searchResults && q && !(c.searchText || "").includes(q)) return false;
       return true;
     });
   }, [
@@ -3615,7 +3617,6 @@ useEffect(() => {
     user.username,
     selfPeer,
     search,
-    filter,
     activityTick,
     hiddenChatIds,
     mutedKeys,
@@ -3628,6 +3629,100 @@ useEffect(() => {
     selected,
     messages,
   ]);
+
+  const chatFolders = useMemo(
+    () => (Array.isArray(user?.chatFolders) ? user.chatFolders : []),
+    [user?.chatFolders],
+  );
+  const activeFolder = filter.startsWith("folder:")
+    ? chatFolders.find((f) => `folder:${f.id}` === filter) || null
+    : null;
+
+  const conversations = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const archived = new Set(archivedKeys.map(String));
+    const folderKeys = activeFolder
+      ? new Set(activeFolder.conversationKeys.map(String))
+      : null;
+    return conversationItems.filter((c) => {
+      if (folderKeys) {
+        // A folder shows every chat the user put in it, archived or not.
+        if (!folderKeys.has(String(c.key))) return false;
+      } else if (filter === "archived") {
+        if (!archived.has(String(c.key))) return false;
+      } else if (archived.has(String(c.key))) {
+        return false;
+      }
+      if (filter === "discover") return false;
+      if (filter === "groups" && c.type !== "group") return false;
+      if (filter === "unread" && !c.unread) return false;
+      if (!searchResults && q && !(c.searchText || "").includes(q)) return false;
+      return true;
+    });
+  }, [conversationItems, search, filter, archivedKeys, activeFolder, searchResults]);
+
+  // A folder deleted here or on another device can't stay selected.
+  useEffect(() => {
+    if (filter.startsWith("folder:") && !activeFolder) setFilter("all");
+  }, [filter, activeFolder]);
+
+  function applyFolders(folders) {
+    if (Array.isArray(folders)) {
+      updateSessionUser({ ...userRef.current, chatFolders: folders });
+    }
+  }
+
+  async function handleSaveFolder({ name, conversationKeys }) {
+    const existing = folderEditor?.folder;
+    if (existing) {
+      const res = await updateChatFolder(existing.id, { name, conversationKeys });
+      applyFolders(res.data);
+      showToast(`Saved “${name}”`, "success");
+      return;
+    }
+    const res = await createChatFolder({ name, conversationKeys });
+    applyFolders(res.data);
+    if (res.folderId) setFilter(`folder:${res.folderId}`);
+    showToast(`Folder “${name}” created`, "success");
+  }
+
+  async function handleDeleteFolder() {
+    const existing = folderEditor?.folder;
+    if (!existing) return;
+    const res = await deleteChatFolder(existing.id);
+    applyFolders(res.data);
+    showToast(`Folder “${existing.name}” deleted`, "info");
+  }
+
+  async function handleToggleChatInFolder(folder, conversation) {
+    const key = String(conversation.key);
+    const included = !folder.conversationKeys.map(String).includes(key);
+    // Optimistic: flip locally, then take the server's list as truth.
+    const before = chatFolders;
+    applyFolders(
+      chatFolders.map((f) =>
+        f.id === folder.id
+          ? {
+              ...f,
+              conversationKeys: included
+                ? [...f.conversationKeys, key]
+                : f.conversationKeys.filter((k) => String(k) !== key),
+            }
+          : f,
+      ),
+    );
+    try {
+      const res = await setChatFolderMembership(folder.id, key, included);
+      applyFolders(res.data);
+      showToast(
+        included ? `Added to “${folder.name}”` : `Removed from “${folder.name}”`,
+        "info",
+      );
+    } catch (err) {
+      applyFolders(before);
+      showToast(err.response?.data?.error || "Could not update folder", "error");
+    }
+  }
 
   // Update browser tab unread count prefix (must run after conversations is defined)
   useEffect(() => {
@@ -6771,6 +6866,12 @@ useEffect(() => {
           showToast(c.pinned ? "Chat unpinned" : "Chat pinned", "info");
         }}
         onToggleVault={(c) => handleToggleVault(c.id)}
+        chatFolders={chatFolders}
+        onCreateFolder={(c) =>
+          setFolderEditor({ folder: null, initialKeys: c ? [String(c.key)] : [] })
+        }
+        onEditFolder={(folder) => setFolderEditor({ folder, initialKeys: [] })}
+        onToggleChatInFolder={handleToggleChatInFolder}
         loadingUsers={loadingUsers}
         hasMoreContacts={!searchResults && (usersHasMore || groupsHasMore)}
         onLoadMoreContacts={loadMoreContacts}
@@ -8113,6 +8214,21 @@ useEffect(() => {
               users={users}
               onClose={() => setShowCreateGroup(false)}
               onCreate={handleCreateGroup}
+            />
+          </Suspense>
+        </LazyChunkErrorBoundary>
+      )}
+
+      {folderEditor && (
+        <LazyChunkErrorBoundary onClose={() => setFolderEditor(null)}>
+          <Suspense fallback={<ModalLoadingFallback />}>
+            <ChatFolderModal
+              folder={folderEditor.folder}
+              initialKeys={folderEditor.initialKeys}
+              conversations={conversationItems}
+              onClose={() => setFolderEditor(null)}
+              onSave={handleSaveFolder}
+              onDelete={handleDeleteFolder}
             />
           </Suspense>
         </LazyChunkErrorBoundary>
