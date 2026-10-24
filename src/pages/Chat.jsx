@@ -81,7 +81,6 @@ import { compressVideo } from "../crypto/videoCompressor.js";
 import {
   attachmentIdOf,
   normalizeAttachment,
-  pickRecorderMimeType,
 } from "../crypto/voiceCache.js";
 import useMeetingCall from "../hooks/useMeetingCall.js";
 import useLiveStream from "../hooks/useLiveStream.js";
@@ -121,7 +120,7 @@ import {
   preferConfirmedThreadText,
 } from "../utils/groupPayload.js";
 import { setVoiceThreadOrder } from "../utils/voicePlaybackQueue.js";
-import useVoiceNoteComposer from "../hooks/useVoiceNoteComposer.js";
+import useVoiceRecorder from "../hooks/useVoiceRecorder.js";
 import VoiceNoteBar from "../components/VoiceNoteBar.jsx";
 import {
   getHiddenChatIds,
@@ -206,11 +205,6 @@ const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
 function formatLastSeenLabel(iso) {
   if (!iso) return "last seen recently";
   return formatLastSeen(iso);
-}
-
-function formatVoiceTimer(seconds) {
-  const s = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function formatFileSize(bytes) {
@@ -332,7 +326,6 @@ export default function Chat() {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
-  const [sendingVoice, setSendingVoice] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [hiddenChatIds, setHiddenChatIds] = useState(() =>
     getHiddenChatIds(user?.id),
@@ -5820,8 +5813,8 @@ useEffect(() => {
     if (
       !selected ||
       (selected.type !== "dm" && selected.type !== "group") ||
-      sendingVoice ||
-      voiceComposer.phase !== "idle"
+      voiceRecorder.sending ||
+      voiceRecorder.phase !== "idle"
     )
       return;
     const items = e.clipboardData?.items;
@@ -6558,50 +6551,17 @@ useEffect(() => {
     [activeGroup, user.id],
   );
 
-  const voiceComposer = useVoiceNoteComposer({
+  const voiceRecorder = useVoiceRecorder({
+    activeChatKey: selected?.key,
     maxSeconds: MAX_VOICE_SECONDS,
     disabled:
-      sendingVoice ||
       uploads.length > 0 ||
       (selected?.type === "group" && !canPostInGroup),
+    onSendVoice: async (file, meta) => {
+      await sendAttachmentFile(file, meta);
+    },
+    onError: (err) => showToast(err, "error"),
   });
-
-  const handleVoiceSend = useCallback(async () => {
-    if (sendingVoice) return;
-    setSendingVoice(true);
-    try {
-      let payload = voiceComposer.previewMeta;
-      if (!payload && voiceComposer.phase !== "idle" && voiceComposer.phase !== "preview") {
-        const res = await voiceComposer.stopAndGetPayload();
-        if (res?.error) {
-          showToast(res.error, "error");
-          return;
-        }
-        payload = res?.data;
-      }
-      if (!payload?.file) return;
-
-      await sendAttachmentFile(payload.file, {
-        plainBytes: payload.plainBytes,
-        waveform: payload.waveform,
-        durationSeconds: payload.durationSeconds,
-      });
-      voiceComposer.reset();
-    } catch (err) {
-      showToast(
-        err.response?.data?.error || err.message || "Failed to send voice note",
-        "error",
-      );
-    } finally {
-      setSendingVoice(false);
-    }
-  }, [sendingVoice, voiceComposer]);
-
-  useEffect(() => {
-    voiceComposer.cancelRecording();
-    voiceComposer.discardPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.key]);
 
   function mentionBlockReason(m) {
     const policy = m.privacy?.groupMentions || "everyone";
@@ -7702,21 +7662,21 @@ useEffect(() => {
                   })()}
 
                 <div className="composer-shell">
-                  {voiceComposer.phase !== "idle" ? (
+                  {voiceRecorder.phase !== "idle" ? (
                     <VoiceNoteBar
-                      phase={voiceComposer.phase}
-                      seconds={voiceComposer.seconds}
-                      levels={voiceComposer.levels}
-                      paused={voiceComposer.paused}
-                      previewUrl={voiceComposer.previewUrl}
-                      previewMeta={voiceComposer.previewMeta}
+                      phase={voiceRecorder.phase}
+                      seconds={voiceRecorder.seconds}
+                      levels={voiceRecorder.levels}
+                      paused={voiceRecorder.paused}
+                      previewUrl={voiceRecorder.previewUrl}
+                      previewMeta={voiceRecorder.previewMeta}
                       maxSeconds={MAX_VOICE_SECONDS}
-                      sending={sendingVoice}
-                      onCancel={voiceComposer.cancelRecording}
-                      onStop={voiceComposer.stopToPreview}
-                      onDiscard={voiceComposer.discardPreview}
-                      onTogglePause={voiceComposer.togglePause}
-                      onSend={handleVoiceSend}
+                      sending={voiceRecorder.sending}
+                      onCancel={voiceRecorder.cancelRecording}
+                      onStop={voiceRecorder.stopToPreview}
+                      onDiscard={voiceRecorder.discardPreview}
+                      onTogglePause={voiceRecorder.togglePause}
+                      onSend={voiceRecorder.handleVoiceSend}
                     />
                   ) : !canPostInGroup ? (
                     <div
@@ -7863,7 +7823,7 @@ useEffect(() => {
                         className={`attach-button ${composerPlusOpen ? "active" : ""}`}
                         onClick={() => setComposerPlusOpen(true)}
                         aria-label="More message actions"
-                        disabled={sendingVoice || uploads.length > 0}
+                        disabled={voiceRecorder.sending || uploads.length > 0}
                       >
                         <Plus size={20} strokeWidth={2} aria-hidden="true" />
                       </button>
@@ -7872,7 +7832,7 @@ useEffect(() => {
                         className={`attach-button ${showEmojiPicker ? "active" : ""}`}
                         onClick={() => setShowEmojiPicker((v) => !v)}
                         aria-label="Open emoji picker"
-                        disabled={sendingVoice}
+                        disabled={voiceRecorder.sending}
                       >
                         <Smile size={20} strokeWidth={2} aria-hidden="true" />
                       </button>
@@ -7888,7 +7848,7 @@ useEffect(() => {
                         ref={textareaRef}
                         dir="auto"
                         placeholder={
-                          sendingVoice
+                          voiceRecorder.sending
                             ? t('chat.sendingVoice', 'Sending voice note…')
                             : uploads.length
                               ? t('chat.placeholderUploading', 'Uploading encrypted file…')
@@ -7907,7 +7867,7 @@ useEffect(() => {
                         onKeyDown={handleTextareaKeyDown}
                         onPaste={handlePaste}
                         aria-label={t('chat.placeholderDirect', 'Type message body')}
-                        disabled={sendingVoice}
+                        disabled={voiceRecorder.sending}
                         rows={1}
                       />
                       {draft.trim() ? (
@@ -7915,7 +7875,7 @@ useEffect(() => {
                           type="submit"
                           className="send-button"
                           aria-label="Send encrypted message"
-                          disabled={sendingVoice}
+                          disabled={voiceRecorder.sending}
                         >
                           <Send size={18} strokeWidth={2} aria-hidden="true" />
                         </button>
@@ -7925,10 +7885,10 @@ useEffect(() => {
                           className="send-button voice-mic-btn"
                           aria-label="Record voice note"
                           title="Record voice note"
-                          disabled={sendingVoice || uploads.length > 0}
+                          disabled={voiceRecorder.sending || uploads.length > 0}
                           onClick={async (e) => {
                             e.preventDefault();
-                            const res = await voiceComposer.startRecording();
+                            const res = await voiceRecorder.startRecording();
                             if (res?.error) showToast(res.error, "error");
                           }}
                         >
