@@ -13463,6 +13463,48 @@ button.message-reply-preview:hover {
   transform-origin: bottom right;
 }
 
+/* "Folders" filter tab (2+ folders) and its dropdown. */
+.folder-filter-trigger {
+  gap: 4px;
+}
+
+.folder-filter-trigger .sidebar-filter-label {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-filter-caret {
+  flex-shrink: 0;
+  transition: transform 0.16s ease;
+}
+
+.folder-filter-trigger.is-open .folder-filter-caret {
+  transform: rotate(180deg);
+}
+
+.conv-row-dropdown.folder-filter-dropdown {
+  width: 220px;
+  transform-origin: top left;
+}
+
+.conv-row-dropdown.folder-filter-dropdown.open-up {
+  transform-origin: bottom left;
+}
+
+.conv-row-dropdown .conv-folder-item-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .conv-row-dropdown-title {
   padding: 5px 10px 8px;
   color: var(--text-muted);

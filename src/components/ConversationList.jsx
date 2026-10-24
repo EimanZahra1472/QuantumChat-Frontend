@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Archive, Ban, BellOff, Bookmark, Check, ChevronLeft, ChevronRight, Folder, FolderPlus, Lock, Mail, MoreVertical, Pencil, Phone, Pin, Search, Unlock, UserPlus, Users, UserX, VolumeX, X } from 'lucide-react';
+import { Archive, Ban, BellOff, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, Folder, FolderPlus, Lock, Mail, MoreVertical, Pencil, Phone, Pin, Search, Unlock, UserPlus, Users, UserX, VolumeX, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -41,6 +41,22 @@ const CONV_MENU_WIDTH = 190;
 const CONV_MENU_EST_HEIGHT = 230;
 const CONV_MENU_ITEM_HEIGHT = 40;
 const CONV_MENU_MAX_HEIGHT = 280; // matches .conv-row-dropdown max-height
+
+// With this many folders or more, they collapse into one "Folders" dropdown
+// tab instead of crowding the filter row with one tab each.
+const FOLDER_DROPDOWN_MIN = 2;
+const FOLDER_MENU_WIDTH = 220;
+
+/** Fixed position for the folders dropdown, left-aligned under its tab. */
+function computeFolderMenuPosition(triggerEl, itemCount) {
+  const rect = triggerEl.getBoundingClientRect();
+  const pad = 12;
+  const estHeight = Math.min(CONV_MENU_MAX_HEIGHT, 48 + itemCount * CONV_MENU_ITEM_HEIGHT);
+  const openUp = window.innerHeight - rect.bottom - pad < estHeight && rect.top > window.innerHeight / 2;
+  const top = openUp ? Math.max(pad, rect.top - estHeight - 8) : rect.bottom + 8;
+  const left = Math.max(pad, Math.min(rect.left, window.innerWidth - FOLDER_MENU_WIDTH - pad));
+  return { top, left, openUp };
+}
 
 function computeConvMenuPosition(triggerEl, estHeight = CONV_MENU_EST_HEIGHT) {
   const rect = triggerEl.getBoundingClientRect();
@@ -187,17 +203,57 @@ export default function ConversationList({
 
   const pendingFriendCount = incomingRequests.length;
 
-  // User folders sit right after the built-in All / Unread / Groups tabs.
+  // User folders sit right after the built-in All / Unread / Groups tabs:
+  // one tab per folder, or a single "Folders" dropdown once there are several.
+  const foldersAsDropdown = chatFolders.length >= FOLDER_DROPDOWN_MIN;
   const baseFilters = useMemo(() => {
-    const folderTabs = chatFolders.map((f) => ({ id: `folder:${f.id}`, label: f.name, isFolder: true }));
-    if (!folderTabs.length) return FILTERS;
+    if (!chatFolders.length) return FILTERS;
+    const folderTabs = foldersAsDropdown
+      ? [{ id: 'folders', label: 'Folders', isFolderMenu: true }]
+      : chatFolders.map((f) => ({ id: `folder:${f.id}`, label: f.name, isFolder: true }));
     const at = FILTERS.findIndex((f) => f.id === 'groups') + 1;
     return [...FILTERS.slice(0, at), ...folderTabs, ...FILTERS.slice(at)];
-  }, [chatFolders]);
+  }, [chatFolders, foldersAsDropdown]);
 
   const activeFolder = filter.startsWith('folder:')
     ? chatFolders.find((f) => `folder:${f.id}` === filter) || null
     : null;
+  // Which tab is highlighted: in dropdown mode every folder lives under 'folders'.
+  const activeTabId = activeFolder && foldersAsDropdown ? 'folders' : filter;
+
+  const [folderMenuPos, setFolderMenuPos] = useState(null);
+  const closeFolderMenu = useCallback(() => setFolderMenuPos(null), []);
+
+  useEffect(() => {
+    if (!folderMenuPos) return undefined;
+    function onPointerDown(e) {
+      if (!e.target.closest('.folder-filter-trigger') && !e.target.closest('.folder-filter-dropdown')) {
+        closeFolderMenu();
+      }
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') closeFolderMenu();
+    }
+    function onScroll(e) {
+      if (e.target?.closest?.('.folder-filter-dropdown')) return;
+      closeFolderMenu();
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', closeFolderMenu);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', closeFolderMenu);
+    };
+  }, [folderMenuPos, closeFolderMenu]);
+
+  // Folders deleted down to one: the dropdown tab is gone, so drop its menu.
+  useEffect(() => {
+    if (!foldersAsDropdown) closeFolderMenu();
+  }, [foldersAsDropdown, closeFolderMenu]);
 
   const orderedFilters = useMemo(() => {
     if (!pendingFriendCount) return baseFilters;
@@ -218,7 +274,7 @@ export default function ConversationList({
   );
 
   useEffect(() => {
-    const activeIndex = orderedFilters.findIndex((f) => f.id === filter);
+    const activeIndex = orderedFilters.findIndex((f) => f.id === activeTabId);
     if (activeIndex < 0) return;
     setFilterStart((start) => {
       if (activeIndex < start) return activeIndex;
@@ -227,7 +283,7 @@ export default function ConversationList({
       }
       return start;
     });
-  }, [filter, orderedFilters, maxFilterStart]);
+  }, [activeTabId, orderedFilters, maxFilterStart]);
 
   useEffect(() => {
     if (!pendingFriendCount) return;
@@ -632,19 +688,48 @@ export default function ConversationList({
 
         <div className="sidebar-filters" role="tablist" aria-label="Conversation filters">
           {visibleFilters.map((f) => {
+            if (f.isFolderMenu) {
+              const open = Boolean(folderMenuPos);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTabId === f.id}
+                  aria-haspopup="menu"
+                  aria-expanded={open}
+                  className={`sidebar-filter-btn is-folder folder-filter-trigger${
+                    activeTabId === f.id ? ' active' : ''
+                  }${open ? ' is-open' : ''}`}
+                  title={activeFolder ? `Folder: ${activeFolder.name}` : 'Your folders'}
+                  onClick={(e) => {
+                    if (open) {
+                      closeFolderMenu();
+                      return;
+                    }
+                    setFolderMenuPos(
+                      computeFolderMenuPosition(e.currentTarget, chatFolders.length + (onCreateFolder ? 1 : 0)),
+                    );
+                  }}
+                >
+                  <span className="sidebar-filter-label">{activeFolder ? activeFolder.name : 'Folders'}</span>
+                  <ChevronDown size={14} strokeWidth={2.25} className="folder-filter-caret" aria-hidden="true" />
+                </button>
+              );
+            }
             const showFriendBadge = f.id === 'friends' && pendingFriendCount > 0;
             return (
               <button
                 key={f.id}
                 type="button"
                 role="tab"
-                aria-selected={filter === f.id}
+                aria-selected={activeTabId === f.id}
                 aria-label={
                   showFriendBadge
                     ? `Friends, ${pendingFriendCount} pending request${pendingFriendCount === 1 ? '' : 's'}`
                     : f.label
                 }
-                className={`sidebar-filter-btn${filter === f.id ? ' active' : ''}${
+                className={`sidebar-filter-btn${activeTabId === f.id ? ' active' : ''}${
                   showFriendBadge ? ' has-requests' : ''
                 }${f.isFolder ? ' is-folder' : ''}`}
                 title={f.isFolder ? f.label : undefined}
@@ -681,6 +766,59 @@ export default function ConversationList({
           <ChevronRight size={16} strokeWidth={2.25} aria-hidden="true" />
         </button>
       </div>
+
+      {folderMenuPos
+        ? createPortal(
+            <div
+              className={`conv-row-dropdown folder-filter-dropdown open${folderMenuPos.openUp ? ' open-up' : ''}`}
+              role="menu"
+              aria-label="Folders"
+              style={{ top: folderMenuPos.top, left: folderMenuPos.left, right: 'auto' }}
+            >
+              <div className="conv-row-dropdown-title">Folders</div>
+              {chatFolders.map((folder) => {
+                const selected = activeFolder?.id === folder.id;
+                const count = folder.conversationKeys.length;
+                return (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    className={`conv-folder-item${selected ? ' is-checked' : ''}`}
+                    onClick={() => {
+                      closeFolderMenu();
+                      onFilterChange(`folder:${folder.id}`);
+                    }}
+                  >
+                    <Folder size={14} />
+                    <span className="conv-folder-item-name">{folder.name}</span>
+                    <span className="conv-folder-item-count" aria-label={`${count} ${count === 1 ? 'chat' : 'chats'}`}>
+                      {count}
+                    </span>
+                    {selected ? <Check size={14} className="conv-folder-check" aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+              {onCreateFolder ? (
+                <>
+                  <div className="conv-row-dropdown-sep" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      closeFolderMenu();
+                      onCreateFolder(null);
+                    }}
+                  >
+                    <FolderPlus size={14} /> New folder…
+                  </button>
+                </>
+              ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
 
       <div className="sidebar-create-row">
         <button type="button" className="create-group-btn" onClick={onCreateGroup}>
