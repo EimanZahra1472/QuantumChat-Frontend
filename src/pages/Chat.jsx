@@ -268,20 +268,6 @@ function isSameDay(d1, d2) {
   );
 }
 
-/** Whether a message belongs to a Clear-chat scope bucket. */
-function messageMatchesClearScope(message, scope) {
-  if (scope === "all") return true;
-  const category = message?.mediaCategory;
-  const hasAttachment = Boolean(
-    message?.attachment &&
-      (typeof message.attachment === "object"
-        ? message.attachment.id || message.attachment._id
-        : message.attachment),
-  );
-  if (scope === "text") return !category && !hasAttachment;
-  return category === scope;
-}
-
 export default function Chat() {
   const { t, i18n } = useTranslation();
   const {
