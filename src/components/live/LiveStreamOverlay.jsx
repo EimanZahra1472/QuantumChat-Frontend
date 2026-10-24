@@ -252,7 +252,17 @@ export default function LiveStreamOverlay({
           ) : (
             <LiveVideo stream={remoteStream} />
           )}
-          {isHost && cameraOff ? <div className="live-camera-off">Camera is off</div> : null}
+          {isHost && cameraOff ? (
+            <div className="live-camera-off">
+              <UserAvatar
+                userId={live.host?.id}
+                name={hostLabel(live.host)}
+                hasAvatar={live.host?.hasAvatar}
+                size="xl"
+              />
+              <span>Your camera is off</span>
+            </div>
+          ) : null}
 
           {connectionLabel ? <div className="live-connection">{connectionLabel}</div> : null}
           {!isHost && connection === 'failed' ? (
@@ -279,9 +289,9 @@ export default function LiveStreamOverlay({
               </div>
             </div>
             <div className="live-topbar-right">
-              <span className="live-badge">LIVE</span>
-              <span className="live-pill" aria-label="Elapsed time">
-                {formatDuration(elapsed)}
+              <span className="live-status" aria-label={`Live, ${formatDuration(elapsed)} elapsed`}>
+                <span className="live-status-tag">LIVE</span>
+                <span className="live-status-time">{formatDuration(elapsed)}</span>
               </span>
               <button
                 type="button"
@@ -313,115 +323,123 @@ export default function LiveStreamOverlay({
             ))}
           </div>
 
-          <div className="live-comments" aria-live="polite">
-            {comments.map((c) => (
-              <div key={c.id} className={`live-comment${c.from?.isHost ? ' is-host' : ''}`}>
-                <strong>{c.from?.isHost ? `${c.from.name} · Host` : c.from?.name}</strong> {c.text}
+          <div className="live-bottom">
+            <div className="live-comments" aria-live="polite">
+              {comments.map((c) => (
+                <div key={c.id} className={`live-comment${c.from?.isHost ? ' is-host' : ''}`}>
+                  <strong>
+                    {c.from?.name}
+                    {c.from?.isHost ? <span className="live-host-tag">Host</span> : null}
+                  </strong>
+                  <span>{c.text}</span>
+                </div>
+              ))}
+              {!commentsAllowed ? <div className="live-comment is-system">Comments are turned off</div> : null}
+              <div ref={commentsEndRef} />
+            </div>
+
+            <div className="live-interact">
+              <form className="live-compose" onSubmit={submitComment}>
+                <input
+                  className="live-compose-input"
+                  value={draft}
+                  maxLength={LIVE_COMMENT_MAX}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={commentsAllowed || isHost ? 'Say something…' : 'Comments are off'}
+                  disabled={!isLive || (!commentsAllowed && !isHost) || (!isHost && connection !== 'connected')}
+                  aria-label="Comment"
+                />
+                <button type="submit" className="live-send" disabled={!draft.trim()} aria-label="Send comment">
+                  <Send size={16} />
+                </button>
+              </form>
+              <div className="live-reaction-bar" role="group" aria-label="Reactions">
+                {LIVE_REACTIONS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className="live-reaction-btn"
+                    onClick={() => onReaction?.(emoji)}
+                    disabled={!isLive || (!isHost && connection !== 'connected')}
+                    aria-label={`React ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
               </div>
-            ))}
-            {!commentsAllowed ? <div className="live-comment is-system">Comments are turned off</div> : null}
-            <div ref={commentsEndRef} />
-          </div>
-        </div>
+            </div>
 
-        <div className="live-bottom">
-          <form className="live-compose" onSubmit={submitComment}>
-            <input
-              className="live-input"
-              value={draft}
-              maxLength={LIVE_COMMENT_MAX}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder={commentsAllowed || isHost ? 'Add a comment…' : 'Comments are off'}
-              disabled={!isLive || (!commentsAllowed && !isHost) || (!isHost && connection !== 'connected')}
-              aria-label="Comment"
-            />
-            <button type="submit" className="live-icon-btn" disabled={!draft.trim()} aria-label="Send comment">
-              <Send size={18} />
-            </button>
-          </form>
-          <div className="live-reaction-bar" role="group" aria-label="Reactions">
-            {LIVE_REACTIONS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                className="live-reaction-btn"
-                onClick={() => onReaction?.(emoji)}
-                disabled={!isLive || (!isHost && connection !== 'connected')}
-                aria-label={`React ${emoji}`}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-
-          {isHost ? (
-            <div className="live-controls">
-              <button
-                type="button"
-                className={`call-ctrl${muted ? ' active' : ''}`}
-                onClick={onToggleMute}
-                aria-label={muted ? 'Unmute' : 'Mute'}
-                title={muted ? 'Unmute' : 'Mute'}
-              >
-                {muted ? <MicOff size={20} /> : <Mic size={20} />}
-              </button>
-              <button
-                type="button"
-                className={`call-ctrl${cameraOff ? ' active' : ''}`}
-                onClick={onToggleCamera}
-                aria-label={cameraOff ? 'Turn camera on' : 'Turn camera off'}
-                title={cameraOff ? 'Turn camera on' : 'Turn camera off'}
-              >
-                {cameraOff ? <VideoOff size={20} /> : <Video size={20} />}
-              </button>
-              <button
-                type="button"
-                className={`call-ctrl${!commentsAllowed ? ' active' : ''}`}
-                onClick={() => onToggleComments?.(!commentsAllowed)}
-                aria-label={commentsAllowed ? 'Turn comments off' : 'Turn comments on'}
-                title={commentsAllowed ? 'Turn comments off' : 'Turn comments on'}
-              >
-                {commentsAllowed ? <MessageSquare size={20} /> : <MessageSquareOff size={20} />}
-              </button>
-              <button
-                type="button"
-                className="call-ctrl"
-                onClick={() => setPanel(panel === 'invite' ? null : 'invite')}
-                aria-label="Invite contacts"
-                title="Invite contacts"
-              >
-                <UserPlus size={20} />
-              </button>
-              <button
-                type="button"
-                className="call-ctrl"
-                onClick={() => setPanel(panel === 'viewers' ? null : 'viewers')}
-                aria-label="Viewers"
-                title="Viewers"
-              >
-                <Users size={20} />
-              </button>
-              {confirmEnd ? (
-                <span className="live-confirm-end">
-                  <button type="button" className="live-btn" onClick={() => setConfirmEnd(false)}>
-                    Keep going
-                  </button>
-                  <button type="button" className="live-btn live-btn-danger" onClick={onEnd} disabled={!isLive}>
-                    End for everyone
-                  </button>
-                </span>
-              ) : (
+            {isHost ? (
+              <div className="live-controls">
                 <button
                   type="button"
-                  className="live-btn live-btn-danger"
-                  onClick={() => setConfirmEnd(true)}
-                  disabled={!isLive}
+                  className={`live-ctrl${muted ? ' is-off' : ''}`}
+                  onClick={onToggleMute}
+                  aria-label={muted ? 'Unmute' : 'Mute'}
+                  title={muted ? 'Unmute' : 'Mute'}
                 >
-                  End live
+                  {muted ? <MicOff size={19} /> : <Mic size={19} />}
                 </button>
-              )}
-            </div>
-          ) : null}
+                <button
+                  type="button"
+                  className={`live-ctrl${cameraOff ? ' is-off' : ''}`}
+                  onClick={onToggleCamera}
+                  aria-label={cameraOff ? 'Turn camera on' : 'Turn camera off'}
+                  title={cameraOff ? 'Turn camera on' : 'Turn camera off'}
+                >
+                  {cameraOff ? <VideoOff size={19} /> : <Video size={19} />}
+                </button>
+                <span className="live-ctrl-sep" aria-hidden="true" />
+                <button
+                  type="button"
+                  className={`live-ctrl${!commentsAllowed ? ' is-off' : ''}`}
+                  onClick={() => onToggleComments?.(!commentsAllowed)}
+                  aria-label={commentsAllowed ? 'Turn comments off' : 'Turn comments on'}
+                  title={commentsAllowed ? 'Turn comments off' : 'Turn comments on'}
+                >
+                  {commentsAllowed ? <MessageSquare size={19} /> : <MessageSquareOff size={19} />}
+                </button>
+                <button
+                  type="button"
+                  className={`live-ctrl${panel === 'invite' ? ' is-active' : ''}`}
+                  onClick={() => setPanel(panel === 'invite' ? null : 'invite')}
+                  aria-label="Invite contacts"
+                  title="Invite contacts"
+                >
+                  <UserPlus size={19} />
+                </button>
+                <button
+                  type="button"
+                  className={`live-ctrl${panel === 'viewers' ? ' is-active' : ''}`}
+                  onClick={() => setPanel(panel === 'viewers' ? null : 'viewers')}
+                  aria-label="Viewers"
+                  title="Viewers"
+                >
+                  <Users size={19} />
+                </button>
+                <span className="live-ctrl-sep" aria-hidden="true" />
+                {confirmEnd ? (
+                  <span className="live-confirm-end">
+                    <button type="button" className="live-end-btn is-ghost" onClick={() => setConfirmEnd(false)}>
+                      Keep going
+                    </button>
+                    <button type="button" className="live-end-btn" onClick={onEnd} disabled={!isLive}>
+                      End for everyone
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="live-end-btn"
+                    onClick={() => setConfirmEnd(true)}
+                    disabled={!isLive}
+                  >
+                    End
+                  </button>
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {isHost && panel ? (
