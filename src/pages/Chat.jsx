@@ -82,11 +82,9 @@ import {
   attachmentIdOf,
   normalizeAttachment,
 } from "../crypto/voiceCache.js";
-import useMeetingCall from "../hooks/useMeetingCall.js";
 import useLiveStream from "../hooks/useLiveStream.js";
 import { listLive } from "../api/live.js";
 import { useScreenshotProtection } from "../hooks/useScreenshotProtection.js";
-import useWebRTCCall from "../hooks/useWebRTCCall.js";
 import { getWallpaperBackground, getWallpaperFx, preloadWallpaper } from '../theme/wallpaperBackgrounds.js';
 import activityStore from "../utils/activityStore.js";
 import {
@@ -123,6 +121,7 @@ import { setVoiceThreadOrder } from "../utils/voicePlaybackQueue.js";
 import useVoiceRecorder from "../hooks/useVoiceRecorder.js";
 import useChatSocketEvents from "../hooks/useChatSocketEvents.js";
 import useFriendships from "../hooks/useFriendships.js";
+import useChatCalls from "../hooks/useChatCalls.js";
 import VoiceNoteBar from "../components/VoiceNoteBar.jsx";
 import {
   getHiddenChatIds,
@@ -173,7 +172,7 @@ import {
   setConversationActivity,
 } from "../utils/readState.js";
 import { shouldEnforceScreenshotProtection } from "../utils/screenshotProtection.js";
-import { playReceiveSound, playSendSound, startIncomingRingSound, unlockAudio } from "../utils/sounds.js";
+import { playReceiveSound, playSendSound, unlockAudio } from "../utils/sounds.js";
 
 const AIAssistantPanel = lazy(() => import("../components/AIAssistantPanel.jsx"));
 const CameraCapture = lazy(() => import("../components/CameraCapture.jsx"));
@@ -305,7 +304,6 @@ export default function Chat() {
   // { folder: existing folder | null, initialKeys: string[] } while the
   // create/edit folder dialog is open.
   const [folderEditor, setFolderEditor] = useState(null);
-  const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
@@ -404,7 +402,6 @@ export default function Chat() {
   const [actionSheetMessage, setActionSheetMessage] = useState(null);
   const [messageInfoData, setMessageInfoData] = useState(null);
   const [editHistoryMessage, setEditHistoryMessage] = useState(null);
-  const [callMinimized, setCallMinimized] = useState(false);
   const [isMobileShell, setIsMobileShell] = useState(() =>
     typeof window !== "undefined"
       ? window.matchMedia("(max-width: 768px)").matches
@@ -583,7 +580,6 @@ useEffect(() => {
   const selectedRef = useRef(null);
   const userRef = useRef(user);
   const messagesRef = useRef([]);
-  const notifiedCallIdRef = useRef(null);
   const dragCountRef = useRef(0);
    const imageSrcMapRef = useRef(new Map());
   const videoSrcMapRef = useRef(new Map());
@@ -699,68 +695,32 @@ useEffect(() => {
     };
   }, [user?.id]);
 
-  const webrtc = useWebRTCCall({
-    userId: user?.id,
-    resolvePeerPublicKeys: async (peerId) => {
-      if (String(peerId) === String(user?.id)) return user?.publicKeys || [];
-      const peer =
-        (selectedRef.current?.type === "dm" &&
-          String(selectedRef.current.id) === String(peerId) &&
-          selectedRef.current.peer) ||
-        usersRef.current.find((u) => String(u.id) === String(peerId));
-      return peer?.publicKeys || [];
-    },
-    onMissed: (call) => {
-      showToast("Call ended or declined", "info");
-      if (notifSettings?.callNotifications?.missedCallReminders === false) return;
-      if (!shouldNotify(notifSettings, { kind: "call" })) return;
-      const caller =
-        users.find((u) => String(u.id) === String(call?.peerId))?.displayName ||
-        users.find((u) => String(u.id) === String(call?.peerId))?.username ||
-        "Someone";
-      showNotificationPopup(
-        { title: caller, body: "Missed call" },
-        notifSettings,
-        () => { },
-      );
-    },
-    onEnd: async (info) => {
-      try {
-        if (info.role !== "caller") return;
-        const peerId = String(info.peerId);
-        const peer = usersRef.current.find((u) => String(u.id) === peerId);
-        const myKey = pickRandom(getCurrentKeySet(user.id));
-        const recipientKeys = (peer?.publicKeys || []).filter(Boolean);
-        if (!myKey?.publicKey || recipientKeys.length === 0) return;
-        const payload = JSON.stringify({
-          __type: "call",
-          callId: info.callId,
-          video: info.video,
-          role: info.role,
-          answered: !!info.answered,
-          durationSeconds: Number(info.durationSeconds) || 0,
-          reason: info.reason || null,
-          endedAt: new Date().toISOString(),
-        });
-        const forRecipient = sealMessage(payload, pickRandom(recipientKeys));
-        const forSender = sealMessage(payload, myKey.publicKey);
-        const { data } = await client.post("/messages", {
-          to: peerId,
-          forRecipient,
-          forSender,
-        });
-        recordActivityFromMessage(data.data);
-        setMessages((prev) => {
-          const id = String(data.data.id || data.data._id);
-          if (prev.some((m) => String(m.id || m._id) === id)) return prev;
-          return [...prev, decorate(data.data)];
-        });
-        playSendSound();
-        setTimeout(() => scrollToBottom("smooth"), 50);
-      } catch (err) {
-        /* ignore send errors */
-      }
-    },
+  const {
+    webrtc,
+    meetingCall,
+    callMinimized,
+    setCallMinimized,
+    showAddParticipantModal,
+    setShowAddParticipantModal,
+    handleStartCall,
+    handleStartMeeting,
+    handleAddParticipant,
+    currentParticipantIds,
+  } = useChatCalls({
+    user,
+    users,
+    usersRef,
+    groupsRef,
+    selected,
+    selectedRef,
+    getTitle: () => title,
+    notifSettings,
+    showToast,
+    setMessages,
+    sealGroupEnvelopes,
+    decorate: (raw) => decorate(raw),
+    recordActivityFromMessage: (raw) => recordActivityFromMessage(raw),
+    scrollToBottom: (b) => scrollToBottom(b),
   });
 
   // Sends a reply typed directly into a notification's inline text field,
@@ -929,58 +889,6 @@ useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  useEffect(() => {
-    const call = webrtc.call;
-    if (!call || call.role !== "callee" || call.status !== "incoming") return;
-
-    const enabled = call.video
-      ? notifSettings?.callNotifications?.videoCallEnabled !== false
-      : notifSettings?.callNotifications?.voiceCallEnabled !== false;
-    if (!enabled || !shouldNotify(notifSettings, { kind: "call" })) return;
-
-    const caller =
-      users.find((u) => String(u.id) === String(call.peerId))?.displayName ||
-      users.find((u) => String(u.id) === String(call.peerId))?.username ||
-      "Someone";
-
-    if (notifiedCallIdRef.current !== call.callId) {
-      notifiedCallIdRef.current = call.callId;
-      showNotificationPopup(
-        {
-          title: caller,
-          body: call.video ? "Incoming video call" : "Incoming voice call",
-          requireInteraction: true,
-          silent: false,
-          tag: `call:${call.callId}`,
-        },
-        notifSettings,
-        () => {
-          window.focus();
-        },
-      );
-      if (notifSettings?.callNotifications?.vibrateOnCall && navigator.vibrate) {
-        navigator.vibrate([200, 100, 200, 100, 200]);
-      }
-    }
-
-    const volumeScale =
-      typeof notifSettings?.soundVolume === "number"
-        ? notifSettings.soundVolume / 100
-        : 0.8;
-    const stopRing =
-      notifSettings?.soundEnabled === false
-        ? () => { }
-        : startIncomingRingSound(volumeScale);
-
-    return () => {
-      stopRing();
-    };
-  }, [webrtc.call, users, notifSettings]);
-
-  useEffect(() => {
-    if (!webrtc.call) setCallMinimized(false);
-  }, [webrtc.call]);
-
   // Unlock Web Audio after the first user gesture so later alerts can play
   // even when QuantumChat is in a background tab.
   useEffect(() => {
@@ -992,58 +900,6 @@ useEffect(() => {
       window.removeEventListener("keydown", unlock);
     };
   }, []);
-
-  const meetingCall = useMeetingCall({
-    userId: user?.id,
-    resolveGroupMembers: async (groupId) => {
-      const group =
-        (selectedRef.current?.type === "group" &&
-          String(selectedRef.current.id) === String(groupId) &&
-          selectedRef.current.group) ||
-        groupsRef.current.find((g) => String(g.id) === String(groupId));
-      if (!group) return null;
-      return { groupName: group.name, members: group.members || [] };
-    },
-    onEnd: async (info) => {
-      try {
-        if (info.role !== "host") return;
-        const group = groupsRef.current.find(
-          (g) => String(g.id) === String(info.groupId),
-        );
-        if (!group) return;
-        const payload = JSON.stringify({
-          __type: "meeting",
-          meetingId: info.meetingId,
-          video: info.video,
-          participantCount: info.participantCount,
-          durationSeconds: Number(info.durationSeconds) || 0,
-          reason: info.reason || null,
-          endedAt: new Date().toISOString(),
-        });
-        const isPublic = group.visibility === "public";
-        const body = { kind: "text" };
-        if (isPublic) {
-          body.content = payload;
-        } else {
-          body.envelopes = sealGroupEnvelopes(payload, group);
-        }
-        const { data } = await client.post(
-          `/groups/${group.id}/messages`,
-          body,
-        );
-        recordActivityFromMessage(data.data);
-        setMessages((prev) => {
-          const id = String(data.data.id || data.data._id);
-          if (prev.some((m) => String(m.id || m._id) === id)) return prev;
-          return [...prev, decorate(data.data)];
-        });
-        playSendSound();
-        setTimeout(() => scrollToBottom("smooth"), 50);
-      } catch (err) {
-        /* ignore send errors */
-      }
-    },
-  });
 
   // ---- Live streaming --------------------------------------------------
   const liveCall = useLiveStream({ user });
@@ -5335,42 +5191,6 @@ useEffect(() => {
     logout();
   }
 
-  async function handleStartCall(video) {
-    if (!selected || selected.type !== "dm") return;
-    if (selected.isSelfChat || String(selected.id) === String(user.id)) return;
-    try {
-      await webrtc.startCall({
-        peerId: selected.id,
-        peerName: title,
-        video,
-      });
-    } catch (err) {
-      showToast(
-        err.response?.data?.error ||
-        err.message ||
-        "Could not start the call. Check your connection and try again.",
-        "error",
-      );
-    }
-  }
-
-  async function handleStartMeeting(video) {
-    if (!selected || selected.type !== "group") return;
-    try {
-      await meetingCall.startMeeting({
-        groupId: selected.id,
-        video,
-      });
-    } catch (err) {
-      showToast(
-        err.response?.data?.error ||
-        err.message ||
-        "Could not start the meeting. Check your connection and try again.",
-        "error",
-      );
-    }
-  }
-
   // Only sent-bubble color and wallpaper vary by theme — received bubbles
   // stay the default white so text stays readable regardless of which
   // theme color is picked. When the theme is 'default', the var is left
@@ -7058,34 +6878,9 @@ useEffect(() => {
       {showAddParticipantModal && (
         <AddParticipantModal
           users={users}
-          currentParticipantIds={
-            meetingCall.meeting
-              ? [user?.id, ...Array.from(meetingCall.participants.keys())]
-              : webrtc.call
-                ? [user?.id, webrtc.call.peerId]
-                : [user?.id]
-          }
+          currentParticipantIds={currentParticipantIds}
           onClose={() => setShowAddParticipantModal(false)}
-          onAddParticipant={async (targetUser) => {
-            try {
-              if (meetingCall.meeting) {
-                await meetingCall.inviteParticipant(targetUser);
-                showToast(`Invited ${targetUser.displayName || targetUser.username} to call`, "success");
-              } else if (webrtc.call) {
-                const originalPeerId = webrtc.call.peerId;
-                const originalPeerUser = users.find((u) => String(u.id) === String(originalPeerId));
-                await meetingCall.startMeeting({
-                  video: Boolean(webrtc.call.video),
-                });
-                await meetingCall.inviteParticipant({ id: originalPeerId, publicKeys: originalPeerUser?.publicKeys || [] });
-                await meetingCall.inviteParticipant(targetUser);
-                webrtc.hangup();
-                showToast(`Created group meeting & invited ${targetUser.displayName || targetUser.username}`, "success");
-              }
-            } catch (err) {
-              showToast("Could not invite participant", "error");
-            }
-          }}
+          onAddParticipant={handleAddParticipant}
         />
       )}
 
