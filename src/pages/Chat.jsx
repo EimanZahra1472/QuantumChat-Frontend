@@ -122,6 +122,7 @@ import useVoiceRecorder from "../hooks/useVoiceRecorder.js";
 import useChatSocketEvents from "../hooks/useChatSocketEvents.js";
 import useFriendships from "../hooks/useFriendships.js";
 import useChatCalls from "../hooks/useChatCalls.js";
+import usePinnedAndStarredMessages from "../hooks/usePinnedAndStarredMessages.js";
 import VoiceNoteBar from "../components/VoiceNoteBar.jsx";
 import {
   getHiddenChatIds,
@@ -129,21 +130,12 @@ import {
   unhideChat,
 } from "../utils/hiddenChats.js";
 import {
-  getAutomaticImportantSource
-} from "../utils/importantMessages.js";
-import {
   clearAllStarred,
-  clearAutoImportantRemoval,
   deleteMessageForMe,
-  getAutoImportantRemovedIds,
   getDeletedForMeIds,
   getPinnedIds,
   getStarredEntries,
-  getStarredIds,
-  rememberAutoImportantRemoval,
   restoreStarredEntries,
-  togglePinnedMessage,
-  toggleStarredMessage,
 } from "../utils/messageExtras.js";
 import { getMessagePreviewText } from "../utils/messagePreview.js";
 import {
@@ -348,14 +340,8 @@ export default function Chat() {
   const [deletedForMeIds, setDeletedForMeIds] = useState(() =>
     getDeletedForMeIds(user?.id),
   );
-  const [starredIds, setStarredIds] = useState(() => getStarredIds(user?.id));
-  const [importantEntries, setImportantEntries] = useState([]);
-  const [importantLoading, setImportantLoading] = useState(false);
-  const [showStarredMessages, setShowStarredMessages] = useState(false);
   const [showChatMedia, setShowChatMedia] = useState(false);
-  const [starredScope, setStarredScope] = useState('all'); // 'all' | 'chat'
   const [pendingJumpMessageId, setPendingJumpMessageId] = useState(null);
-  const [pinnedIds, setPinnedIds] = useState([]);
   const [forwardMessage, setForwardMessage] = useState(null);
   const [forwardBusy, setForwardBusy] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
@@ -364,7 +350,6 @@ export default function Chat() {
   const [uploads, setUploads] = useState([]);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [disappearSeconds, setDisappearSeconds] = useState(0);
-  const importantEntriesRef = useRef([]);
   const [capsuleUnlocksAt, setCapsuleUnlocksAt] = useState("");
   const [showCapsulePicker, setShowCapsulePicker] = useState(false);
   const [mediaPreview, setMediaPreview] = useState(null);
@@ -1120,111 +1105,38 @@ useEffect(() => {
     [user, resolveMySecretKey],
   );
 
-  // Refs so Important-messages mapping can use latest directory/decrypt
-  // helpers without re-fetching (and re-toasting) every time users/groups change.
-  const importantDecorateRef = useRef(decorate);
-  importantDecorateRef.current = decorate;
-  const importantUsersRef = useRef(users);
-  importantUsersRef.current = users;
-  const importantGroupsRef = useRef(groups);
-  importantGroupsRef.current = groups;
-
-  const loadImportantMessages = useCallback(async () => {
-    if (!user?.id) return;
-    setImportantLoading(true);
-    try {
-      const { data } = await client.get('/messages/important');
-      const markedAtById = new Map(
-        (data?.data?.entries || []).map((entry) => [String(entry.messageId), entry.markedAt]),
-      );
-      const directoryUsers = importantUsersRef.current;
-      const directoryGroups = importantGroupsRef.current;
-      const next = (data?.data?.messages || []).map((raw) => {
-        const message = importantDecorateRef.current(raw);
-        const messageId = String(message.id || message._id);
-        const groupId = raw.group ? String(raw.group) : null;
-        const group = groupId
-          ? directoryGroups.find((candidate) => String(candidate.id) === groupId)
-          : null;
-        const peerId = raw.group
-          ? groupId
-          : String(raw.from) === String(user.id) ? raw.to : raw.from;
-        const peer = peerId
-          ? directoryUsers.find((candidate) => String(candidate.id) === String(peerId))
-          : null;
-        const type = groupId ? 'group' : 'dm';
-        const title = group?.name || getDisplayName(peer, i18n.language) || 'Chat';
-        return {
-          ...message,
-          id: messageId,
-          type,
-          conversationId: groupId || peerId,
-          conversationKey: groupId ? conversationKeyForGroup(groupId) : conversationKeyForUser(peerId),
-          title,
-          from: raw.from,
-          createdAt: raw.createdAt,
-          hasAttachment: Boolean(message.attachment),
-          attachmentFilename: message.attachment?.filename || null,
-          important: true,
-          isImportant: true,
-          importantAt: markedAtById.get(messageId) || null,
-        };
-      });
-      setImportantEntries(next);
-    } catch (err) {
-      setImportantEntries([]);
-      // Background prefetch — never surface raw validation noise like
-      // "Invalid user id" (happens when an older API treats "important" as a
-      // peer id). Chat itself still works.
-      const status = err.response?.status;
-      const msg = err.response?.data?.error || '';
-      if (status && status !== 400 && status !== 404 && msg !== 'Invalid user id') {
-        showToast(msg || "Couldn't load Important messages", 'error');
-      }
-    } finally {
-      setImportantLoading(false);
-    }
-  }, [getDisplayName, i18n.language, showToast, user?.id]);
-
-  useEffect(() => {
-    if (hasLocalKeyring) void loadImportantMessages();
-  }, [hasLocalKeyring, loadImportantMessages]);
-
-  useEffect(() => {
-    importantEntriesRef.current = importantEntries;
-  }, [importantEntries]);
-
-  const markMessageImportantIfNeeded = useCallback(async (rawMessage) => {
-    if (!rawMessage || !user?.id) return;
-    const messageId = String(rawMessage.id || rawMessage._id || '');
-    if (!messageId) return;
-    const alreadyImportant = importantEntriesRef.current.some((entry) => String(entry.id || entry._id) === messageId);
-    if (alreadyImportant) return;
-    const autoSource = getAutomaticImportantSource(rawMessage);
-    if (!autoSource) return;
-    if (getAutoImportantRemovedIds(user.id).includes(messageId)) return;
-
-    try {
-      await client.post(`/messages/${messageId}/important`);
-      setImportantEntries((current) => [{
-        ...rawMessage,
-        id: messageId,
-        title: rawMessage.title || 'Chat',
-        conversationId: rawMessage.conversationId || rawMessage.group || rawMessage.to || rawMessage.from,
-        type: rawMessage.group ? 'group' : 'dm',
-        hasAttachment: Boolean(rawMessage.attachment || rawMessage.attachments?.length),
-        attachmentFilename: rawMessage.attachment?.filename || rawMessage.attachments?.[0]?.filename || null,
-        text: rawMessage.text || rawMessage.content || null,
-        important: true,
-        isImportant: true,
-        importantAt: new Date().toISOString(),
-        importantSource: autoSource,
-      }, ...current]);
-    } catch (err) {
-      // Ignore duplicate or noisy auto-save failures; the backend already
-      // guards against repeated writes for the same message.
-    }
-  }, [user?.id]);
+  const {
+    pinnedIds,
+    setPinnedIds,
+    starredIds,
+    setStarredIds,
+    showStarredMessages,
+    setShowStarredMessages,
+    starredScope,
+    setStarredScope,
+    importantEntries,
+    importantLoading,
+    markMessageImportantIfNeeded,
+    handleStarMessage,
+    handleUnstarMessage,
+    handleImportantMessage,
+    handlePinMessage,
+    starredAndImportantEntries,
+  } = usePinnedAndStarredMessages({
+    user,
+    users,
+    groups,
+    selected,
+    selectedRef,
+    messages,
+    hasLocalKeyring,
+    showToast,
+    i18n,
+    decorate,
+    setGroups,
+    setSelected,
+    setExtrasTick,
+  });
 
   const recordActivityFromMessage = useCallback(
     (raw) => {
@@ -4769,96 +4681,6 @@ useEffect(() => {
     );
   }
 
-  function handleStarMessage(messageId) {
-    if (!messageId || !selected) return;
-    const msg = messages.find((m) => String(m.id || m._id) === String(messageId));
-    const nextIds = toggleStarredMessage(
-      user.id,
-      msg || { id: messageId },
-      { key: selected.key, type: selected.type, id: selected.id, title: selected.title },
-    );
-    setStarredIds(nextIds);
-    setExtrasTick((n) => n + 1);
-  }
-
-  async function handleImportantMessage(messageOrId) {
-    const messageId = String(messageOrId?.id || messageOrId?._id || messageOrId || '');
-    if (!messageId) return;
-    const message = typeof messageOrId === 'object'
-      ? messageOrId
-      : messages.find((candidate) => String(candidate.id || candidate._id) === messageId);
-    const previous = importantEntries;
-    const existing = previous.some((entry) => String(entry.id || entry._id) === messageId);
-
-    if (existing) {
-      const wasAutomatic = Boolean(getAutomaticImportantSource(message || previous.find((entry) => String(entry.id || entry._id) === messageId) || {}));
-      if (wasAutomatic) {
-        rememberAutoImportantRemoval(user.id, messageId);
-      }
-      setImportantEntries((current) => current.filter((entry) => String(entry.id || entry._id) !== messageId));
-      try {
-        await client.delete(`/messages/${messageId}/important`);
-        showToast('Removed from Important messages', 'success');
-      } catch (err) {
-        setImportantEntries(previous);
-        showToast(err.response?.data?.error || "Couldn't remove message. Try again.", 'error');
-      }
-      return;
-    }
-
-    clearAutoImportantRemoval(user.id, messageId);
-    const rawConversation = selected;
-    const optimistic = {
-      ...message,
-      id: messageId,
-      type: rawConversation?.type || (message?.group ? 'group' : 'dm'),
-      conversationId: rawConversation?.id || (message?.group ? message.group : message?.from),
-      conversationKey: rawConversation?.key || null,
-      title: rawConversation?.title || 'Chat',
-      isImportant: true,
-      important: true,
-      importantAt: new Date().toISOString(),
-      hasAttachment: Boolean(message?.attachment),
-      attachmentFilename: message?.attachment?.filename || null,
-      importantSource: getAutomaticImportantSource(message || {}),
-    };
-    setImportantEntries((current) => [optimistic, ...current]);
-    try {
-      await client.post(`/messages/${messageId}/important`);
-      showToast('Message saved to Important messages', 'success');
-    } catch (err) {
-      setImportantEntries(previous);
-      showToast(err.response?.data?.error || "Couldn't save message. Try again.", 'error');
-    }
-  }
-
-  async function handlePinMessage(messageId) {
-    if (!selected?.key) return;
-    if (selected.type === "group") {
-      const pinned = (selected.group?.pinnedMessageIds || []).map(String);
-      const isPinned = pinned.includes(String(messageId));
-      try {
-        const { data } = isPinned
-          ? await client.delete(`/groups/${selected.id}/pins/${messageId}`)
-          : await client.post(`/groups/${selected.id}/pins/${messageId}`);
-        const group = data.data;
-        setGroups((prev) =>
-          prev.map((g) => (String(g.id) === String(group.id) ? group : g)),
-        );
-        setSelected((prev) =>
-          prev ? { ...prev, group, title: group.name || prev.title } : prev,
-        );
-        setPinnedIds((group.pinnedMessageIds || []).map(String));
-        setExtrasTick((n) => n + 1);
-      } catch (err) {
-        showToast(err.response?.data?.error || "Failed to update pin", "error");
-      }
-      return;
-    }
-    setPinnedIds(togglePinnedMessage(user.id, selected.key, messageId));
-    setExtrasTick((n) => n + 1);
-  }
-
   async function handleVotePoll(messageId, optionIndex) {
     if (!messageId || optionIndex == null || selected?.type !== "group") return;
     try {
@@ -7313,11 +7135,7 @@ useEffect(() => {
         >
           <Suspense fallback={<ModalLoadingFallback />}>
             <StarredMessagesModal
-              entries={
-                (starredScope === 'chat' && selected
-                  ? [...importantEntries, ...getStarredEntries(user.id)].filter((e) => e.conversationKey === selected.key)
-                  : [...importantEntries, ...getStarredEntries(user.id)])
-              }
+              entries={starredAndImportantEntries}
               usernameById={usernameById}
               currentUserId={user.id}
               onSelect={handleOpenStarredEntry}
@@ -7329,11 +7147,7 @@ useEffect(() => {
                   () => showToast('Could not copy message', 'error'),
                 );
               }}
-              onUnstar={(id) => {
-                const nextIds = toggleStarredMessage(user.id, { id }, null);
-                setStarredIds(nextIds);
-                setExtrasTick((n) => n + 1);
-              }}
+              onUnstar={handleUnstarMessage}
               onRemoveImportant={handleImportantMessage}
               loading={importantLoading}
               onClose={() => {
